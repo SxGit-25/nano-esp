@@ -1,0 +1,17 @@
+[Unit]
+Description=Nano ground-station TCP gateway
+Wants=esp-nano-wifi.service
+After=NetworkManager.service esp-nano-wifi.service
+
+[Service]
+Type=simple
+User=jetson
+Group=jetson
+WorkingDirectory=/home/jetson/nano_code/ground_station_gateway
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 /home/jetson/nano_code/ground_station_gateway/gateway_main.py --host 192.168.4.1 --port 8765 --serial-port /dev/serial/by-id/usb-1a86_USB_Serial-if00-port0 --mspm0-link-dir /home/jetson/nano_code/mspm0_link --log-level INFO
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

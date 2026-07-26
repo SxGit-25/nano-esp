@@ -101,20 +101,11 @@ void TjcDisplay::begin() {
     Serial1.begin(
         kGroundStationBaud,
         SERIAL_8N1,
-        kTjcRxPin,
+        -1,
         kTjcTxPin
     );
 
-    delay(kTjcStartupPageDurationMs);
-    while (Serial1.available() > 0) {
-        processRxByte(static_cast<uint8_t>(Serial1.read()));
-        processRxFrame();
-    }
-
-    synchronizeDisplay();
-
     last_refresh_ms_ = millis();
-    last_debug_log_ms_ = last_refresh_ms_;
 }
 
 void TjcDisplay::poll() {
@@ -122,73 +113,10 @@ void TjcDisplay::poll() {
         return;
     }
 
-    bool power_on_frame = false;
-    while (Serial1.available() > 0) {
-        processRxByte(static_cast<uint8_t>(Serial1.read()));
-        if (processRxFrame()) {
-            power_on_frame = true;
-        }
-    }
-
     const uint32_t now = millis();
-    if (
-        display_online_
-        && now - last_valid_response_ms_ >= kTjcOnlineTimeoutMs
-    ) {
-        display_online_ = false;
-        readback_verified_ = false;
-        refresh_pending_ = false;
-        Serial.println("TJC transport: RESPONSE_TIMEOUT");
-    }
-
-    if (power_on_frame) {
-        display_online_ = false;
-        readback_verified_ = false;
-        refresh_pending_ = false;
-        startup_page_wait_active_ = true;
-        startup_page_wait_started_ms_ = now;
-    } else if (
-        startup_page_wait_active_
-        && now - startup_page_wait_started_ms_ >= kTjcStartupPageDurationMs
-    ) {
-        startup_page_wait_active_ = false;
-        synchronizeDisplay();
-    } else if (
-        !startup_page_wait_active_
-        && !readback_verified_
-        && now - last_probe_ms_ >= kTjcProbeIntervalMs
-    ) {
-        synchronizeDisplay();
-    } else if (
-        !startup_page_wait_active_
-        && readback_verified_
-        && refresh_pending_
-    ) {
-        refresh_pending_ = false;
+    if (now - last_refresh_ms_ >= kTjcRefreshIntervalMs) {
         refresh();
         last_refresh_ms_ = now;
-    } else if (
-        !startup_page_wait_active_
-        && readback_verified_
-        && now - last_refresh_ms_ >= kTjcRefreshIntervalMs
-    ) {
-        refresh();
-        last_refresh_ms_ = now;
-    }
-    if (now - last_debug_log_ms_ >= 1000) {
-        Serial.printf(
-            "TJC debug: online=%s verified=%s powerOn=%s "
-            "tx=%lu ok=%lu echo=%lu error=%lu lastError=0x%02X\n",
-            display_online_ ? "yes" : "no",
-            readback_verified_ ? "yes" : "no",
-            power_on_frame_seen_ ? "yes" : "no",
-            static_cast<unsigned long>(transmit_count_),
-            static_cast<unsigned long>(success_count_),
-            static_cast<unsigned long>(echo_count_),
-            static_cast<unsigned long>(error_count_),
-            last_error_code_
-        );
-        last_debug_log_ms_ = now;
     }
 }
 
@@ -365,9 +293,7 @@ void TjcDisplay::showAp(bool ready) {
     }
     ap_known_ = true;
     ap_ready_ = ready;
-    if (readback_verified_) {
-        setText(kTjcApTextComponent, ready ? "READY" : "DOWN");
-    }
+    setText(kTjcApTextComponent, ready ? "READY" : "DOWN");
 }
 
 void TjcDisplay::showNano(NanoLinkState state) {
@@ -389,9 +315,7 @@ void TjcDisplay::showNano(NanoLinkState state) {
     } else if (state == NanoLinkState::DEGRADED) {
         text = "DEGRADED";
     }
-    if (readback_verified_) {
-        setText(kTjcNanoTextComponent, text);
-    }
+    setText(kTjcNanoTextComponent, text);
 }
 
 void TjcDisplay::showTi(bool online) {
@@ -404,9 +328,7 @@ void TjcDisplay::showTi(bool online) {
     }
     ti_known_ = true;
     ti_online_ = online;
-    if (readback_verified_) {
-        setText(kTjcTiTextComponent, online ? "UP" : "DOWN");
-    }
+    setText(kTjcTiTextComponent, online ? "UP" : "DOWN");
 }
 
 void TjcDisplay::showVehicleStatus(const NanoVehicleStatus &status) {
@@ -419,9 +341,7 @@ void TjcDisplay::showVehicleStatus(const NanoVehicleStatus &status) {
     }
     vehicle_known_ = true;
     vehicle_status_ = status;
-    if (readback_verified_) {
-        writeVehicleStatus(status);
-    }
+    writeVehicleStatus(status);
 }
 
 void TjcDisplay::refresh() {

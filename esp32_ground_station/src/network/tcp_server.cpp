@@ -111,16 +111,15 @@ void GroundStationTcpServer::readClient() {
 }
 
 void GroundStationTcpServer::flushTransmitQueue() {
-    if (transmit_count_ == 0 || client_.availableForWrite() <= 0) {
+    if (transmit_count_ == 0) {
         return;
     }
 
     PendingFrame &frame = transmit_queue_[transmit_head_];
     const size_t remaining = frame.length - frame.offset;
-    const size_t writable = static_cast<size_t>(client_.availableForWrite());
     const size_t sent = client_.write(
         frame.bytes + frame.offset,
-        min(remaining, writable)
+        remaining
     );
     if (sent == 0) {
         return;

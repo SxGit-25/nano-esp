@@ -25,10 +25,21 @@ static const uint32_t kTcpSendStallTimeoutMs = 2000;
 static const uint32_t kTjcRefreshIntervalMs = 1000;
 static const uint32_t kTjcStartupPageDurationMs = 2200;
 static const bool kRunTjcFullDebug = false;
-static const bool kRunTjcTxVisualTest = true;
+static const bool kRunTjcTxVisualTest = false;
 
 /* Change these only to match the component names in the TJC HMI project. */
 static const char kTjcMainPage[] = "main";
 static const char kTjcApTextComponent[] = "tAp";
 static const char kTjcNanoTextComponent[] = "tNano";
 static const char kTjcTiTextComponent[] = "tTi";
+static const char kTjcSystemTextComponent[] = "tSystem";
+static const char kTjcArmedTextComponent[] = "tArmed";
+static const char kTjcFaultTextComponent[] = "tFault";
+static const char kTjcDistanceTextComponent[] = "tDistance";
+static const char kTjcHeadingTextComponent[] = "tHeading";
+static const char kTjcLineErrorTextComponent[] = "tLineError";
+static const char kTjcLeftSpeedTextComponent[] = "tLeftSpeed";
+static const char kTjcRightSpeedTextComponent[] = "tRightSpeed";
+static const char kTjcProgressTextComponent[] = "tProgress";
+static const char kTjcLapCountTextComponent[] = "tLapCount";
+static const char kTjcSegmentTextComponent[] = "tSegment";

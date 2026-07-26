@@ -5,6 +5,7 @@ interface_name="wlan0"
 esp_address="192.168.4.1"
 failure_limit=3
 failure_count=0
+check_interval_s=2
 
 while true; do
     current_connection="$(
@@ -33,5 +34,5 @@ while true; do
         fi
     fi
 
-    sleep 5
+    sleep "$check_interval_s"
 done

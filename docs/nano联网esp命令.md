@@ -22,6 +22,6 @@ cd ~/nano_code/ground_station_gateway
 python3 gateway_main.py \
   --host 192.168.4.1 \
   --port 8765 \
-  --serial-port /dev/serial/by-id/替换为实际设备 \
+  --serial-port /dev/ttyUSB0 \
   --mspm0-link-dir ../mspm0_link
 ```

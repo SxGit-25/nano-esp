@@ -10,10 +10,10 @@
   `groundStationSessionId`，并在其运行期间保持不变。
 - 1 秒双向心跳；3 秒显示 DEGRADED，5 秒关闭连接。
 - `TCP_NODELAY` 与有界发送队列；没有任何运动、ARM、急停或 MSPM0 串口代码。
-- 接收 Nano 周期发送的 MSPM0 状态快照，保存系统状态、故障、距离、航向和
-  循迹误差，但不接收或转发任何控制命令。
-- 通过 UART1 向 TJC 设置 `tAp.txt`、`tNano.txt` 和 `tTi.txt`，显示
-  AP/Nano/TI 链路状态。
+- 接收 Nano 握手后的 `snapshot` 和周期 `status`，保存系统状态、故障、距离、
+  航向和循迹误差，但不接收或转发任何控制命令。
+- 通过UART1向TJC显示AP/Nano/TI链路、系统状态、armed、故障、距离、航向、
+  循迹误差、进度和事件计数；V1.1没有的左右轮速度显示`--`。
 
 ## Arduino IDE 环境
 
@@ -51,8 +51,9 @@ WPA2 密码：
 如果上传一直等待连接，按住开发板 `BOOT`，短按一次 `RESET`，开始上传后松开
 `BOOT`。具体是否需要手动进入下载模式取决于开发板的自动复位电路。
 
-默认 TJC 接线是 GPIO4 TX -> TJC RX、GPIO5 RX <- TJC TX、共地。若 HMI
-控件名不是 `tAp`、`tNano` 与 `tTi`，在 `app_config.h` 修改集中定义。
+默认 TJC 接线是 GPIO4 TX -> TJC RX、GPIO5 RX <- TJC TX、共地。HMI状态页
+必须使用 `docs/TJC状态页制作说明.md` 中的控件名称；如需改名，在
+`app_config.h` 同步修改集中定义。
 
 ## Arduino 草图结构
 

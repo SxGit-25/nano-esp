@@ -1,7 +1,7 @@
 # ESP32--Nano 地面站通信
 
 这是独立于 MSPM0 小车固件的地面站通信工程。阶段 1 的 ESP32--Nano 网络链路
-已经完成；当前增加阶段 2 的最小只读状态贯通。Nano 通过单一串口工作线程调用
+已经完成；当前已实现阶段 2 的只读状态贯通。Nano 通过单一串口工作线程调用
 并列目录中的 `mspm0_link`，只执行 HELLO、HEARTBEAT 和 GET_STATUS，不发送
 运动、ARM、取消、急停或任务命令。
 
@@ -18,4 +18,7 @@ python3 -m unittest discover -s nano_gateway/tests -v
 ```
 
 随后按各子目录 README 配置 ESP32 和 Nano。ESP32 工程使用 Arduino IDE
-编译和烧录。当前验收范围是网络稳定、串口只读状态和掉线恢复，不是车辆控制。
+编译和烧录。当前验收范围是网络稳定、串口只读状态、状态页显示和掉线恢复，
+不是车辆控制。
+
+TJC队友开发状态页时使用 `TJC状态页制作说明.md`。

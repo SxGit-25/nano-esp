@@ -55,5 +55,6 @@ void loop() {
     }
     tjc_display.showNano(tcp_server.linkState());
     tjc_display.showTi(tcp_server.tiOnline());
+    tjc_display.showVehicleStatus(tcp_server.vehicleStatus());
     tjc_display.poll();
 }

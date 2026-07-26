@@ -16,11 +16,21 @@ enum class NanoLinkState {
 struct NanoVehicleStatus {
     bool valid = false;
     bool armed = false;
+    bool has_active_command_id = false;
+    bool has_distance_mm = false;
+    bool has_heading_mdeg = false;
+    bool has_line_error_x100 = false;
+    bool has_progress_percent = false;
+    bool has_lap_count = false;
+    bool has_segment_index = false;
     uint32_t timestamp_ms = 0;
     uint32_t active_command_id = 0;
     int32_t distance_mm = 0;
     int32_t heading_mdeg = 0;
     int16_t line_error_x100 = 0;
+    uint8_t progress_percent = 0;
+    uint8_t lap_count = 0;
+    uint8_t segment_index = 0;
     char system_state[20] = {};
     char fault_code[32] = {};
 };

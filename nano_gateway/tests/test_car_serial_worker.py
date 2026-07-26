@@ -9,6 +9,7 @@ if NANO_GATEWAY_DIR not in sys.path:
     sys.path.insert(0, NANO_GATEWAY_DIR)
 
 from gateway.car_serial_worker import CarSerialWorker  # noqa: E402
+from gateway.state_store import StateStore  # noqa: E402
 
 
 class _FakeLink(object):
@@ -69,19 +70,13 @@ class _FakeLink(object):
 class CarSerialWorkerTests(unittest.TestCase):
     def test_single_thread_publishes_read_only_status(self):
         link = _FakeLink()
-        snapshots = []
-        status_seen = threading.Event()
         stop_event = threading.Event()
-
-        def publish(snapshot):
-            snapshots.append(snapshot)
-            if snapshot["links"]["nanoTi"] == "UP":
-                status_seen.set()
+        state_store = StateStore()
 
         worker = CarSerialWorker(
             port="/dev/fake",
             link_factory=lambda **kwargs: link,
-            status_callback=publish,
+            state_store=state_store,
             heartbeat_interval_s=0.01,
             status_interval_s=0.02,
             reconnect_delay_s=0.01,
@@ -89,17 +84,14 @@ class CarSerialWorkerTests(unittest.TestCase):
         thread = threading.Thread(target=worker.run, args=(stop_event,))
         thread.start()
         try:
-            self.assertTrue(status_seen.wait(1.0))
             self.assertTrue(link.heartbeat_seen.wait(1.0))
+            _, online = state_store.build_message("status")
         finally:
             stop_event.set()
             thread.join(1.0)
 
-        online = next(
-            snapshot
-            for snapshot in snapshots
-            if snapshot["links"]["nanoTi"] == "UP"
-        )
+        _, disconnected = state_store.build_message("status")
+        self.assertEqual("DOWN", disconnected["links"]["nanoTi"])
         self.assertEqual("EXECUTING", online["systemState"])
         self.assertTrue(online["armed"])
         self.assertEqual(42, online["activeCommandId"])

@@ -8,10 +8,10 @@ import errno
 import logging
 import select
 import socket
-import threading
 import time
 
 from gateway.framed_json import FramedJsonError, FramedJsonParser, encode_message
+from gateway.state_store import StateStore
 
 
 PROTOCOL_VERSION = 1
@@ -60,7 +60,13 @@ class GatewayConfig(object):
 class NanoTcpClient(object):
     """TCP client with hello, 1 s heartbeat and bounded reconnect backoff."""
 
-    def __init__(self, config=None, logger=None, version="2.1"):
+    def __init__(
+        self,
+        config=None,
+        logger=None,
+        version="2.1",
+        state_store=None,
+    ):
         self.config = config or GatewayConfig()
         self.logger = logger or logging.getLogger(__name__)
         self.version = version
@@ -77,9 +83,8 @@ class NanoTcpClient(object):
         self._reconnect_delay_s = self.config.reconnect_initial_s
         self._started_at = None
         self._had_handshake = False
-        self._published_status_lock = threading.Lock()
-        self._latest_published_status = None
-        self._ti_online = False
+        self._last_state_revision = 0
+        self.state_store = state_store or StateStore()
 
         self.ground_station_session_id = None
         self.connection_state = "DOWN"
@@ -105,23 +110,6 @@ class NanoTcpClient(object):
                 self.poll()
         finally:
             self.close("client stopped", reconnect=False)
-
-    def publish_status(self, message):
-        """Publish the newest status snapshot from a non-network thread."""
-
-        if (
-            not isinstance(message, dict)
-            or message.get("v") != PROTOCOL_VERSION
-            or message.get("type") != "status"
-        ):
-            raise ValueError("published message must be a v1 status object")
-        links = message.get("links")
-        if not isinstance(links, dict):
-            raise ValueError("published status must contain links")
-
-        with self._published_status_lock:
-            self._latest_published_status = message
-            self._ti_online = links.get("nanoTi") == "UP"
 
     def poll(self):
         """Run one bounded event-loop iteration for embedding or tests."""
@@ -170,7 +158,6 @@ class NanoTcpClient(object):
                 self.close("hello_ack timeout")
             return
 
-        self._queue_latest_status()
         age = now - self._last_rx_at
         if age >= self.config.link_down_timeout_s:
             self.close("peer heartbeat timeout")
@@ -179,6 +166,7 @@ class NanoTcpClient(object):
             self._set_connection_state("DEGRADED")
         if now >= self._next_heartbeat_at:
             self._queue_heartbeat(now)
+        self._queue_latest_status()
 
     def close(self, reason, reconnect=True):
         """Close the active socket and, unless stopped, schedule a reconnect."""
@@ -203,6 +191,7 @@ class NanoTcpClient(object):
         self._connected_at = None
         self._last_rx_at = None
         self._next_heartbeat_at = None
+        self._last_state_revision = 0
         self.ground_station_session_id = None
 
         if reconnect:
@@ -329,6 +318,7 @@ class NanoTcpClient(object):
                 (now - self._connected_at) * 1000.0
             )
             self._set_connection_state("UP")
+            self._queue_snapshot()
             self.logger.info(
                 "ESP32 hello_ack received; groundStationSessionId=%s, helloRttMs=%s",
                 self.ground_station_session_id,
@@ -369,8 +359,6 @@ class NanoTcpClient(object):
 
     def _queue_heartbeat(self, now):
         uptime_ms = int((now - self._started_at) * 1000.0)
-        with self._published_status_lock:
-            ti_online = self._ti_online
         if not self._outbound:
             self._queue_message(
                 {
@@ -378,7 +366,7 @@ class NanoTcpClient(object):
                     "type": "heartbeat",
                     "source": "nano",
                     "uptimeMs": uptime_ms,
-                    "tiOnline": ti_online,
+                    "tiOnline": self.state_store.ti_online,
                 }
             )
         self._next_heartbeat_at = now + self.config.heartbeat_interval_s
@@ -386,17 +374,16 @@ class NanoTcpClient(object):
     def _queue_latest_status(self):
         if self._outbound:
             return
-        with self._published_status_lock:
-            message = self._latest_published_status
-            self._latest_published_status = None
-        if message is None:
+        revision, message = self.state_store.build_message("status")
+        if revision == self._last_state_revision:
             return
+        self._queue_message(message)
+        self._last_state_revision = revision
 
-        outbound = dict(message)
-        links = dict(outbound["links"])
-        links["espNano"] = "UP"
-        outbound["links"] = links
-        self._queue_message(outbound)
+    def _queue_snapshot(self):
+        revision, message = self.state_store.build_message("snapshot")
+        self._queue_message(message)
+        self._last_state_revision = revision
 
     def _queue_message(self, message):
         self._outbound.extend(encode_message(message))
@@ -422,6 +409,8 @@ class NanoTcpClient(object):
         if self.connection_state == state:
             return
         self.connection_state = state
+        link_state = state if state in ("UP", "DEGRADED") else "DOWN"
+        self.state_store.set_esp_nano_link(link_state)
         if self.on_state_change is not None:
             self.on_state_change(state)
 

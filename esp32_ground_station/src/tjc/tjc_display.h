@@ -11,6 +11,7 @@ public:
     void showAp(bool ready);
     void showNano(NanoLinkState state);
     void showTi(bool online);
+    void showVehicleStatus(const NanoVehicleStatus &status);
 
 private:
     void processRxByte(uint8_t byte);
@@ -21,6 +22,7 @@ private:
     void enableCommandFeedback();
     void showMainPage();
     void sendCommand(const char *command);
+    void writeVehicleStatus(const NanoVehicleStatus &status);
     void setText(const char *component, const char *text);
 
     static const uint8_t kRxFrameCapacity = 96;
@@ -31,6 +33,8 @@ private:
     NanoLinkState nano_state_ = NanoLinkState::DOWN;
     bool ti_known_ = false;
     bool ti_online_ = false;
+    bool vehicle_known_ = false;
+    NanoVehicleStatus vehicle_status_;
     uint8_t rx_frame_[kRxFrameCapacity] = {};
     uint8_t rx_data_length_ = 0;
     uint8_t rx_ff_count_ = 0;

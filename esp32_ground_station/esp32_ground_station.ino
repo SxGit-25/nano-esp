@@ -2,6 +2,7 @@
 
 #include "app_config.h"
 #include "src/network/tcp_server.h"
+#include "src/tjc/tjc_debug.h"
 #include "src/tjc/tjc_display.h"
 
 namespace {
@@ -36,6 +37,9 @@ bool startSoftAp() {
 
 void setup() {
     Serial.begin(kGroundStationBaud);
+    if (kRunTjcFullDebug) {
+        runTjcDebug();
+    }
     tjc_display.begin();
 
     soft_ap_ready = startSoftAp();
@@ -51,4 +55,5 @@ void loop() {
     }
     tjc_display.showNano(tcp_server.linkState());
     tjc_display.showTi(tcp_server.tiOnline());
+    tjc_display.poll();
 }

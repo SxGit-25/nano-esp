@@ -22,8 +22,13 @@ static const uint32_t kNanoLinkDegradedTimeoutMs = 3000;
 static const uint32_t kNanoLinkDownTimeoutMs = 5000;
 static const uint32_t kHelloTimeoutMs = 5000;
 static const uint32_t kTcpSendStallTimeoutMs = 2000;
+static const uint32_t kTjcRefreshIntervalMs = 1000;
+static const uint32_t kTjcStartupPageDurationMs = 2200;
+static const bool kRunTjcFullDebug = false;
+static const bool kRunTjcTxVisualTest = true;
 
 /* Change these only to match the component names in the TJC HMI project. */
+static const char kTjcMainPage[] = "main";
 static const char kTjcApTextComponent[] = "tAp";
 static const char kTjcNanoTextComponent[] = "tNano";
 static const char kTjcTiTextComponent[] = "tTi";

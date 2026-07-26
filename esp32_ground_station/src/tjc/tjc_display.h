@@ -17,8 +17,11 @@ private:
     void processRxByte(uint8_t byte);
     bool processRxFrame();
     void logRxFrame(uint8_t length) const;
+    bool isRecentTxEcho(uint8_t length) const;
+    void rememberTxCommand(const char *command);
     void refresh();
     void synchronizeDisplay();
+    void probeDisplay();
     void enableCommandFeedback();
     void showMainPage();
     void sendCommand(const char *command);
@@ -26,6 +29,8 @@ private:
     void setText(const char *component, const char *text);
 
     static const uint8_t kRxFrameCapacity = 96;
+    static const uint8_t kTxHistoryCapacity = 20;
+    static const uint8_t kTxCommandCapacity = 80;
 
     bool ap_known_ = false;
     bool ap_ready_ = false;
@@ -39,14 +44,22 @@ private:
     uint8_t rx_data_length_ = 0;
     uint8_t rx_ff_count_ = 0;
     bool rx_overflow_ = false;
+    char tx_history_[kTxHistoryCapacity][kTxCommandCapacity] = {};
+    uint8_t tx_history_length_[kTxHistoryCapacity] = {};
+    uint8_t tx_history_next_ = 0;
     uint32_t last_refresh_ms_ = 0;
+    uint32_t last_probe_ms_ = 0;
+    uint32_t last_valid_response_ms_ = 0;
     uint32_t last_debug_log_ms_ = 0;
     uint32_t transmit_count_ = 0;
     uint32_t success_count_ = 0;
     uint32_t error_count_ = 0;
+    uint32_t echo_count_ = 0;
     uint8_t last_error_code_ = 0;
-    bool display_ready_seen_ = false;
-    bool sync_response_pending_ = false;
+    bool power_on_frame_seen_ = false;
+    bool display_online_ = false;
+    bool readback_verified_ = false;
+    bool refresh_pending_ = false;
     bool startup_page_wait_active_ = false;
     bool tx_visual_test_active_ = false;
     uint32_t startup_page_wait_started_ms_ = 0;

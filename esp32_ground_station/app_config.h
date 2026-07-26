@@ -14,7 +14,7 @@
 
 static const uint16_t kGroundStationTcpPort = 8765;
 static const uint32_t kGroundStationBaud = 115200;
-static const int kTjcRxPin = 5;
+static const int kTjcRxPin = 6;
 static const int kTjcTxPin = 4;
 
 static const uint32_t kNetworkHeartbeatIntervalMs = 1000;

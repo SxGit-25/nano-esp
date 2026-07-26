@@ -7,6 +7,10 @@
 
 namespace {
 
+constexpr char kTjcProbeText[] = "UART OK";
+constexpr uint32_t kTjcProbeIntervalMs = 1000;
+constexpr uint32_t kTjcOnlineTimeoutMs = 3000;
+
 bool vehicleStatusEqual(
     const NanoVehicleStatus &left,
     const NanoVehicleStatus &right
@@ -85,7 +89,7 @@ void TjcDisplay::begin() {
 
         setText(kTjcApTextComponent, "UART OK");
         Serial1.flush();
-        Serial.println("TJC visual test: main.tAp=\"UART OK\"");
+        Serial.println("TJC visual test: tAp=\"UART OK\"");
         delay(1000);
 
         sendCommand("dim=100");
@@ -108,7 +112,6 @@ void TjcDisplay::begin() {
     }
 
     synchronizeDisplay();
-    delay(100);
 
     last_refresh_ms_ = millis();
     last_debug_log_ms_ = last_refresh_ms_;
@@ -119,16 +122,29 @@ void TjcDisplay::poll() {
         return;
     }
 
-    bool display_ready = false;
+    bool power_on_frame = false;
     while (Serial1.available() > 0) {
         processRxByte(static_cast<uint8_t>(Serial1.read()));
         if (processRxFrame()) {
-            display_ready = true;
+            power_on_frame = true;
         }
     }
 
     const uint32_t now = millis();
-    if (display_ready) {
+    if (
+        display_online_
+        && now - last_valid_response_ms_ >= kTjcOnlineTimeoutMs
+    ) {
+        display_online_ = false;
+        readback_verified_ = false;
+        refresh_pending_ = false;
+        Serial.println("TJC transport: RESPONSE_TIMEOUT");
+    }
+
+    if (power_on_frame) {
+        display_online_ = false;
+        readback_verified_ = false;
+        refresh_pending_ = false;
         startup_page_wait_active_ = true;
         startup_page_wait_started_ms_ = now;
     } else if (
@@ -137,10 +153,23 @@ void TjcDisplay::poll() {
     ) {
         startup_page_wait_active_ = false;
         synchronizeDisplay();
+    } else if (
+        !startup_page_wait_active_
+        && !readback_verified_
+        && now - last_probe_ms_ >= kTjcProbeIntervalMs
+    ) {
+        synchronizeDisplay();
+    } else if (
+        !startup_page_wait_active_
+        && readback_verified_
+        && refresh_pending_
+    ) {
+        refresh_pending_ = false;
         refresh();
         last_refresh_ms_ = now;
     } else if (
         !startup_page_wait_active_
+        && readback_verified_
         && now - last_refresh_ms_ >= kTjcRefreshIntervalMs
     ) {
         refresh();
@@ -148,10 +177,14 @@ void TjcDisplay::poll() {
     }
     if (now - last_debug_log_ms_ >= 1000) {
         Serial.printf(
-            "TJC debug: ready=%s tx=%lu ok=%lu error=%lu lastError=0x%02X\n",
-            display_ready_seen_ ? "yes" : "no",
+            "TJC debug: online=%s verified=%s powerOn=%s "
+            "tx=%lu ok=%lu echo=%lu error=%lu lastError=0x%02X\n",
+            display_online_ ? "yes" : "no",
+            readback_verified_ ? "yes" : "no",
+            power_on_frame_seen_ ? "yes" : "no",
             static_cast<unsigned long>(transmit_count_),
             static_cast<unsigned long>(success_count_),
+            static_cast<unsigned long>(echo_count_),
             static_cast<unsigned long>(error_count_),
             last_error_code_
         );
@@ -202,18 +235,29 @@ bool TjcDisplay::processRxFrame() {
     const uint8_t length = rx_data_length_;
     rx_data_length_ = 0;
 
+    if (isRecentTxEcho(length)) {
+        echo_count_++;
+        if (echo_count_ <= 3 || echo_count_ % 10 == 0) {
+            Serial.printf(
+                "TJC transport: TX_ECHO count=%lu command=%.*s\n",
+                static_cast<unsigned long>(echo_count_),
+                static_cast<int>(length),
+                reinterpret_cast<const char *>(rx_frame_)
+            );
+        }
+        return false;
+    }
+
     if (length == 1) {
         if (type == 0x01) {
             success_count_++;
+            last_valid_response_ms_ = millis();
             return false;
         }
         if (type == 0x88) {
-            display_ready_seen_ = true;
+            power_on_frame_seen_ = true;
+            Serial.println("TJC transport: POWER_ON_FRAME");
             return true;
-        }
-        if (type == 0x00 && sync_response_pending_) {
-            sync_response_pending_ = false;
-            return false;
         }
 
         error_count_++;
@@ -243,6 +287,25 @@ bool TjcDisplay::processRxFrame() {
             static_cast<int>(length - 1),
             reinterpret_cast<const char *>(&rx_frame_[1])
         );
+        if (
+            length == sizeof(kTjcProbeText)
+            && memcmp(
+                &rx_frame_[1],
+                kTjcProbeText,
+                sizeof(kTjcProbeText) - 1
+            ) == 0
+        ) {
+            const bool first_verification = !readback_verified_;
+            display_online_ = true;
+            readback_verified_ = true;
+            refresh_pending_ = true;
+            last_valid_response_ms_ = millis();
+            if (first_verification) {
+                Serial.println(
+                    "TJC transport: VERIFIED by get tAp.txt"
+                );
+            }
+        }
     } else if (type == 0x71 && length == 5) {
         const uint32_t value =
             static_cast<uint32_t>(rx_frame_[1])
@@ -267,6 +330,31 @@ void TjcDisplay::logRxFrame(uint8_t length) const {
     Serial.println();
 }
 
+bool TjcDisplay::isRecentTxEcho(uint8_t length) const {
+    for (uint8_t i = 0; i < kTxHistoryCapacity; i++) {
+        if (
+            tx_history_length_[i] == length
+            && memcmp(tx_history_[i], rx_frame_, length) == 0
+        ) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void TjcDisplay::rememberTxCommand(const char *command) {
+    const size_t length = strlen(command);
+    if (length == 0 || length >= kTxCommandCapacity) {
+        return;
+    }
+
+    memcpy(tx_history_[tx_history_next_], command, length);
+    tx_history_[tx_history_next_][length] = '\0';
+    tx_history_length_[tx_history_next_] = static_cast<uint8_t>(length);
+    tx_history_next_ =
+        static_cast<uint8_t>((tx_history_next_ + 1) % kTxHistoryCapacity);
+}
+
 void TjcDisplay::showAp(bool ready) {
     if (tx_visual_test_active_) {
         return;
@@ -277,7 +365,9 @@ void TjcDisplay::showAp(bool ready) {
     }
     ap_known_ = true;
     ap_ready_ = ready;
-    setText(kTjcApTextComponent, ready ? "READY" : "DOWN");
+    if (readback_verified_) {
+        setText(kTjcApTextComponent, ready ? "READY" : "DOWN");
+    }
 }
 
 void TjcDisplay::showNano(NanoLinkState state) {
@@ -299,7 +389,9 @@ void TjcDisplay::showNano(NanoLinkState state) {
     } else if (state == NanoLinkState::DEGRADED) {
         text = "DEGRADED";
     }
-    setText(kTjcNanoTextComponent, text);
+    if (readback_verified_) {
+        setText(kTjcNanoTextComponent, text);
+    }
 }
 
 void TjcDisplay::showTi(bool online) {
@@ -312,7 +404,9 @@ void TjcDisplay::showTi(bool online) {
     }
     ti_known_ = true;
     ti_online_ = online;
-    setText(kTjcTiTextComponent, online ? "UP" : "DOWN");
+    if (readback_verified_) {
+        setText(kTjcTiTextComponent, online ? "UP" : "DOWN");
+    }
 }
 
 void TjcDisplay::showVehicleStatus(const NanoVehicleStatus &status) {
@@ -325,7 +419,9 @@ void TjcDisplay::showVehicleStatus(const NanoVehicleStatus &status) {
     }
     vehicle_known_ = true;
     vehicle_status_ = status;
-    writeVehicleStatus(status);
+    if (readback_verified_) {
+        writeVehicleStatus(status);
+    }
 }
 
 void TjcDisplay::refresh() {
@@ -352,16 +448,31 @@ void TjcDisplay::refresh() {
 }
 
 void TjcDisplay::synchronizeDisplay() {
-    sync_response_pending_ = true;
-    Serial1.write(0x00);
-    Serial1.write(0xFF);
-    Serial1.write(0xFF);
-    Serial1.write(0xFF);
-    Serial1.flush();
-
     enableCommandFeedback();
     showMainPage();
     Serial1.flush();
+    delay(100);
+    probeDisplay();
+}
+
+void TjcDisplay::probeDisplay() {
+    setText(kTjcApTextComponent, kTjcProbeText);
+
+    char command[48];
+    const int command_length = snprintf(
+        command,
+        sizeof(command),
+        "get %s.txt",
+        kTjcApTextComponent
+    );
+    if (
+        command_length > 0
+        && command_length < static_cast<int>(sizeof(command))
+    ) {
+        sendCommand(command);
+    }
+    Serial1.flush();
+    last_probe_ms_ = millis();
 }
 
 void TjcDisplay::enableCommandFeedback() {
@@ -387,6 +498,7 @@ void TjcDisplay::showMainPage() {
 }
 
 void TjcDisplay::sendCommand(const char *command) {
+    rememberTxCommand(command);
     Serial1.print(command);
     Serial1.write(0xFF);
     Serial1.write(0xFF);
@@ -449,8 +561,7 @@ void TjcDisplay::setText(const char *component, const char *text) {
     const int command_length = snprintf(
         command,
         sizeof(command),
-        "%s.%s.txt=\"%s\"",
-        kTjcMainPage,
+        "%s.txt=\"%s\"",
         component,
         text
     );

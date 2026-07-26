@@ -302,10 +302,16 @@ void testGpioStaticCoupling() {
         && rx_when_tx_high_again == HIGH;
 
     Serial.printf(
-        "[GPIO COUPLING] TX4=HIGH -> RX5=%d, "
-        "TX4=LOW -> RX5=%d, TX4=HIGH -> RX5=%d\n",
+        "[GPIO COUPLING] TX%d=HIGH -> RX%d=%d, "
+        "TX%d=LOW -> RX%d=%d, TX%d=HIGH -> RX%d=%d\n",
+        kTjcTxPin,
+        kTjcRxPin,
         rx_when_tx_high,
+        kTjcTxPin,
+        kTjcRxPin,
         rx_when_tx_low,
+        kTjcTxPin,
+        kTjcRxPin,
         rx_when_tx_high_again
     );
     Serial.printf(
@@ -820,7 +826,9 @@ void printSummary() {
         summary.uart2_exact_echo ? "DETECTED" : "NOT DETECTED"
     );
     Serial.printf(
-        "GPIO4->GPIO5 coupling       %s\n",
+        "GPIO%d->GPIO%d coupling       %s\n",
+        kTjcTxPin,
+        kTjcRxPin,
         summary.gpio_static_coupling ? "DETECTED" : "NOT DETECTED"
     );
     Serial.printf(

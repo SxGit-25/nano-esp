@@ -51,7 +51,7 @@ WPA2 密码：
 如果上传一直等待连接，按住开发板 `BOOT`，短按一次 `RESET`，开始上传后松开
 `BOOT`。具体是否需要手动进入下载模式取决于开发板的自动复位电路。
 
-默认 TJC 接线是 GPIO4 TX -> TJC RX、GPIO5 RX <- TJC TX、共地。HMI状态页
+默认 TJC 接线是 GPIO4 TX -> TJC RX、GPIO6 RX <- TJC TX、共地。HMI状态页
 必须使用 `docs/TJC状态页制作说明.md` 中的控件名称；如需改名，在
 `app_config.h` 同步修改集中定义。
 

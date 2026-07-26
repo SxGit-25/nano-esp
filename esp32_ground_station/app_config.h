@@ -21,6 +21,7 @@ static const uint32_t kNetworkHeartbeatIntervalMs = 1000;
 static const uint32_t kNanoLinkDegradedTimeoutMs = 3000;
 static const uint32_t kNanoLinkDownTimeoutMs = 5000;
 static const uint32_t kHelloTimeoutMs = 5000;
+static const uint32_t kTcpSendStallTimeoutMs = 2000;
 
 /* Change these only to match the component names in the TJC HMI project. */
 static const char kTjcApTextComponent[] = "tAp";

@@ -72,6 +72,7 @@ private:
     uint32_t connected_at_ms_ = 0;
     uint32_t last_valid_message_ms_ = 0;
     uint32_t next_heartbeat_ms_ = 0;
+    uint32_t last_transmit_progress_ms_ = 0;
     NanoLinkState link_state_ = NanoLinkState::DOWN;
     bool ti_online_ = false;
     NanoVehicleStatus vehicle_status_;

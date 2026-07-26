@@ -1,6 +1,8 @@
 #include "tcp_server.h"
 
+#include <errno.h>
 #include <esp_system.h>
+#include <lwip/sockets.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -79,6 +81,7 @@ void GroundStationTcpServer::acceptClient() {
     connected_at_ms_ = millis();
     last_valid_message_ms_ = connected_at_ms_;
     next_heartbeat_ms_ = 0;
+    last_transmit_progress_ms_ = connected_at_ms_;
     vehicle_status_ = NanoVehicleStatus();
     setTiOnline(false);
     setLinkState(NanoLinkState::CONNECTING);
@@ -129,14 +132,35 @@ void GroundStationTcpServer::flushTransmitQueue() {
 
     PendingFrame &frame = transmit_queue_[transmit_head_];
     const size_t remaining = frame.length - frame.offset;
-    const size_t sent = client_.write(
-        frame.bytes + frame.offset,
-        remaining
-    );
-    if (sent == 0) {
+    const int socket_fd = client_.fd();
+    if (socket_fd < 0) {
+        closeClient("invalid TCP socket");
         return;
     }
-    frame.offset += sent;
+
+    const ssize_t sent = send(
+        socket_fd,
+        frame.bytes + frame.offset,
+        remaining,
+        MSG_DONTWAIT
+    );
+    if (sent < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            if (millis() - last_transmit_progress_ms_ >=
+                kTcpSendStallTimeoutMs) {
+                closeClient("TCP transmit stalled");
+            }
+            return;
+        }
+        closeClient("TCP send failed");
+        return;
+    }
+    if (sent == 0) {
+        closeClient("TCP socket closed during send");
+        return;
+    }
+    last_transmit_progress_ms_ = millis();
+    frame.offset += static_cast<size_t>(sent);
     if (frame.offset == frame.length) {
         transmit_head_ = (transmit_head_ + 1) % kTransmitQueueLength;
         --transmit_count_;
@@ -299,6 +323,7 @@ bool GroundStationTcpServer::queueJson(const JsonDocument &document) {
         return false;
     }
 
+    const bool queue_was_empty = transmit_count_ == 0;
     PendingFrame &frame = transmit_queue_[
         (transmit_head_ + transmit_count_) % kTransmitQueueLength
     ];
@@ -317,6 +342,9 @@ bool GroundStationTcpServer::queueJson(const JsonDocument &document) {
     frame.length = static_cast<uint16_t>(payload_length + 4);
     frame.offset = 0;
     ++transmit_count_;
+    if (queue_was_empty) {
+        last_transmit_progress_ms_ = millis();
+    }
     return true;
 }
 

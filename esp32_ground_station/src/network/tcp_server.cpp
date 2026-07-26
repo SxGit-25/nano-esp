@@ -218,7 +218,7 @@ void GroundStationTcpServer::handleMessage(const String &json) {
         return;
     }
 
-    if (strcmp(type, "status") == 0) {
+    if (strcmp(type, "status") == 0 || strcmp(type, "snapshot") == 0) {
         if (!handleStatus(object)) {
             closeClient("invalid Nano status");
             return;
@@ -263,16 +263,32 @@ bool GroundStationTcpServer::handleStatus(JsonObject object) {
     next.armed = object["armed"].as<bool>();
     next.timestamp_ms = object["timestampMs"].as<uint32_t>();
     if (object["activeCommandId"].is<uint32_t>()) {
+        next.has_active_command_id = true;
         next.active_command_id = object["activeCommandId"].as<uint32_t>();
     }
     if (object["distanceMm"].is<int32_t>()) {
+        next.has_distance_mm = true;
         next.distance_mm = object["distanceMm"].as<int32_t>();
     }
     if (object["headingMdeg"].is<int32_t>()) {
+        next.has_heading_mdeg = true;
         next.heading_mdeg = object["headingMdeg"].as<int32_t>();
     }
     if (object["lineErrorX100"].is<int16_t>()) {
+        next.has_line_error_x100 = true;
         next.line_error_x100 = object["lineErrorX100"].as<int16_t>();
+    }
+    if (object["progressPercent"].is<uint8_t>()) {
+        next.has_progress_percent = true;
+        next.progress_percent = object["progressPercent"].as<uint8_t>();
+    }
+    if (object["lapCount"].is<uint8_t>()) {
+        next.has_lap_count = true;
+        next.lap_count = object["lapCount"].as<uint8_t>();
+    }
+    if (object["segmentIndex"].is<uint8_t>()) {
+        next.has_segment_index = true;
+        next.segment_index = object["segmentIndex"].as<uint8_t>();
     }
     snprintf(next.system_state, sizeof(next.system_state), "%s", system_state);
     snprintf(

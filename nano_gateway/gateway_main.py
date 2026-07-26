@@ -9,6 +9,7 @@ import sys
 import threading
 
 from gateway.car_serial_worker import CarSerialWorker, load_car_serial_link
+from gateway.state_store import StateStore
 from gateway.tcp_client import GatewayConfig, NanoTcpClient
 
 
@@ -49,7 +50,11 @@ def main():
     signal.signal(signal.SIGINT, request_stop)
     signal.signal(signal.SIGTERM, request_stop)
 
-    client = NanoTcpClient(GatewayConfig(host=args.host, port=args.port))
+    state_store = StateStore()
+    client = NanoTcpClient(
+        GatewayConfig(host=args.host, port=args.port),
+        state_store=state_store,
+    )
     serial_thread = None
     if args.serial_port:
         try:
@@ -60,7 +65,7 @@ def main():
         worker = CarSerialWorker(
             port=args.serial_port,
             link_factory=link_factory,
-            status_callback=client.publish_status,
+            state_store=state_store,
         )
         serial_thread = threading.Thread(
             target=worker.run,

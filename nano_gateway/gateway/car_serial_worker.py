@@ -7,45 +7,6 @@ import sys
 import time
 
 
-SYSTEM_STATE_NAMES = {
-    0: "IDLE",
-    1: "CALIBRATING",
-    2: "ARMED",
-    3: "EXECUTING",
-    4: "EXECUTING",
-    5: "SAFE_STOP",
-    6: "FAULT",
-}
-
-TRANSACTION_STATE_NAMES = {
-    0: "NONE",
-    1: "ACCEPTED",
-    2: "RUNNING",
-    3: "CANCELLING",
-    4: "DONE",
-    5: "FAILED",
-}
-
-FAULT_CODE_NAMES = {
-    0: "NONE",
-    1: "COMMAND_TIMEOUT",
-    2: "CANCEL_STOP_TIMEOUT",
-    3: "LINK_LOST",
-    4: "LINE_DATA_INVALID",
-    5: "LINE_LOST",
-    6: "IMU_INVALID",
-    7: "IMU_CALIBRATION_FAILED",
-    8: "IMU_DISCONTINUITY",
-    9: "SENSOR_NOT_READY",
-    10: "ENCODER_LEFT_NO_MOTION",
-    11: "ENCODER_RIGHT_NO_MOTION",
-    12: "ENCODER_WRONG_DIRECTION",
-    13: "CONTROL_DEADLINE_MISSED",
-    14: "RX_OVERFLOW",
-    15: "EMERGENCY_STOPPED",
-}
-
-
 def load_car_serial_link(mspm0_link_directory):
     """Load CarSerialLink from the existing sibling mspm0_link project."""
 
@@ -68,7 +29,7 @@ class CarSerialWorker(object):
         self,
         port,
         link_factory,
-        status_callback,
+        state_store,
         heartbeat_interval_s=0.1,
         status_interval_s=1.0,
         reconnect_delay_s=1.0,
@@ -84,7 +45,7 @@ class CarSerialWorker(object):
 
         self.port = port
         self.link_factory = link_factory
-        self.status_callback = status_callback
+        self.state_store = state_store
         self.heartbeat_interval_s = heartbeat_interval_s
         self.status_interval_s = status_interval_s
         self.reconnect_delay_s = reconnect_delay_s
@@ -119,7 +80,7 @@ class CarSerialWorker(object):
                     hello["boot_id"],
                     int(hello_elapsed * 1000.0),
                 )
-                self._publish_status(status)
+                self.state_store.update_from_mspm0(status, hello)
                 self._service_link(link, stop_event)
             except Exception as error:
                 if not stop_event.is_set():
@@ -150,7 +111,7 @@ class CarSerialWorker(object):
             now = time.monotonic()
             if now >= next_status:
                 status, _ = link.get_status()
-                self._publish_status(status)
+                self.state_store.update_from_mspm0(status, self._hello)
                 next_status = now + self.status_interval_s
 
             deadline = min(next_heartbeat, next_status)
@@ -165,64 +126,7 @@ class CarSerialWorker(object):
             self._publish_disconnected()
 
     def _publish_disconnected(self):
-        self.status_callback(
-            {
-                "v": 1,
-                "type": "status",
-                "timestampMs": self._uptime_ms(),
-                "systemState": "DISCONNECTED",
-                "armed": False,
-                "activeCommandId": None,
-                "activeTaskId": None,
-                "links": {
-                    "nanoTi": "DOWN",
-                },
-            }
-        )
-
-    def _publish_status(self, status):
-        system_state = status["system_state"]
-        transaction_state = status["transaction_state"]
-        fault_code = status["latched_fault_code"]
-        active_command_id = status["reported_command_id"] or None
-        hello = self._hello or {}
-
-        self.status_callback(
-            {
-                "v": 1,
-                "type": "status",
-                "timestampMs": self._uptime_ms(),
-                "systemState": SYSTEM_STATE_NAMES.get(
-                    system_state,
-                    "UNKNOWN_{}".format(system_state),
-                ),
-                "armed": system_state in (2, 3, 4),
-                "activeCommandId": active_command_id,
-                "activeTaskId": None,
-                "faultCode": FAULT_CODE_NAMES.get(
-                    fault_code,
-                    "UNKNOWN_{}".format(fault_code),
-                ),
-                "transactionState": TRANSACTION_STATE_NAMES.get(
-                    transaction_state,
-                    "UNKNOWN_{}".format(transaction_state),
-                ),
-                "motionType": status["motion_type"],
-                "progressPercent": status["progress_percent"],
-                "lineErrorX100": status["line_error_x100"],
-                "distanceMm": status["distance_mm"],
-                "headingMdeg": status["heading_mdeg"],
-                "elapsedMs": status["elapsed_ms"],
-                "lastProtocolError": status["last_protocol_error"],
-                "lapCount": status["lap_count"],
-                "segmentIndex": status["segment_index"],
-                "tiBootId": hello.get("boot_id"),
-                "tiCapabilityFlags": hello.get("capability_flags"),
-                "links": {
-                    "nanoTi": "UP",
-                },
-            }
-        )
+        self.state_store.mark_ti_disconnected()
 
     def _uptime_ms(self, now=None):
         if self._started_at is None:

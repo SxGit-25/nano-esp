@@ -5,11 +5,11 @@
 #include "secrets.h"
 
 #ifndef CAR_GS_WIFI_SSID
-#error "Create include/secrets.h from secrets.h.example and configure CAR_GS_WIFI_SSID"
+#error "Create secrets.h from secrets.h.example and configure CAR_GS_WIFI_SSID"
 #endif
 
 #ifndef CAR_GS_WIFI_PASSWORD
-#error "Create include/secrets.h from secrets.h.example and configure CAR_GS_WIFI_PASSWORD"
+#error "Create secrets.h from secrets.h.example and configure CAR_GS_WIFI_PASSWORD"
 #endif
 
 static const uint16_t kGroundStationTcpPort = 8765;

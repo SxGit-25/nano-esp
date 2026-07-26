@@ -15,5 +15,5 @@
 python3 -m unittest discover -s nano_gateway/tests -v
 ```
 
-随后按各子目录 README 配置 ESP32 和 Nano。阶段 1 的验收是网络稳定和重连，
-不是车辆控制。
+随后按各子目录 README 配置 ESP32 和 Nano。ESP32 工程使用 Arduino IDE
+编译和烧录；阶段 1 的验收是网络稳定和重连，不是车辆控制。

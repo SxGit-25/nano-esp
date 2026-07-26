@@ -2,7 +2,7 @@
 
 #include <Arduino.h>
 
-#include "network/tcp_server.h"
+#include "../network/tcp_server.h"
 
 class TjcDisplay {
 public:

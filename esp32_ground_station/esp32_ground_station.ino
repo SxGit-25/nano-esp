@@ -1,8 +1,8 @@
 #include <WiFi.h>
 
 #include "app_config.h"
-#include "network/tcp_server.h"
-#include "tjc/tjc_display.h"
+#include "src/network/tcp_server.h"
+#include "src/tjc/tjc_display.h"
 
 namespace {
 

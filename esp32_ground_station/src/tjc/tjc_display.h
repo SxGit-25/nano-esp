@@ -9,6 +9,7 @@ public:
     void begin();
     void showAp(bool ready);
     void showNano(NanoLinkState state);
+    void showTi(bool online);
 
 private:
     void setText(const char *component, const char *text);
@@ -17,4 +18,6 @@ private:
     bool ap_ready_ = false;
     bool nano_known_ = false;
     NanoLinkState nano_state_ = NanoLinkState::DOWN;
+    bool ti_known_ = false;
+    bool ti_online_ = false;
 };

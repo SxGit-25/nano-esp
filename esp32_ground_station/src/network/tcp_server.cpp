@@ -1,6 +1,8 @@
 #include "tcp_server.h"
 
 #include <esp_system.h>
+#include <stdio.h>
+#include <string.h>
 
 #include "app_config.h"
 
@@ -45,6 +47,14 @@ NanoLinkState GroundStationTcpServer::linkState() const {
     return link_state_;
 }
 
+bool GroundStationTcpServer::tiOnline() const {
+    return ti_online_;
+}
+
+const NanoVehicleStatus &GroundStationTcpServer::vehicleStatus() const {
+    return vehicle_status_;
+}
+
 uint32_t GroundStationTcpServer::groundStationSessionId() const {
     return ground_station_session_id_;
 }
@@ -69,6 +79,8 @@ void GroundStationTcpServer::acceptClient() {
     connected_at_ms_ = millis();
     last_valid_message_ms_ = connected_at_ms_;
     next_heartbeat_ms_ = 0;
+    vehicle_status_ = NanoVehicleStatus();
+    setTiOnline(false);
     setLinkState(NanoLinkState::CONNECTING);
     Serial.printf(
         "Nano TCP client connected from %s:%u\n",
@@ -168,15 +180,95 @@ void GroundStationTcpServer::handleMessage(const String &json) {
         return;
     }
 
-    if (strcmp(type, "heartbeat") != 0 ||
-        !object["source"].is<const char *>() ||
-        strcmp(object["source"].as<const char *>(), "nano") != 0 ||
-        !object["uptimeMs"].is<uint32_t>()) {
-        closeClient("unexpected stage-1 message");
+    if (strcmp(type, "heartbeat") == 0) {
+        if (!object["source"].is<const char *>() ||
+            strcmp(object["source"].as<const char *>(), "nano") != 0 ||
+            !object["uptimeMs"].is<uint32_t>() ||
+            !object["tiOnline"].is<bool>()) {
+            closeClient("invalid Nano heartbeat");
+            return;
+        }
+        setTiOnline(object["tiOnline"].as<bool>());
+        last_valid_message_ms_ = millis();
+        setLinkState(NanoLinkState::UP);
         return;
     }
-    last_valid_message_ms_ = millis();
-    setLinkState(NanoLinkState::UP);
+
+    if (strcmp(type, "status") == 0) {
+        if (!handleStatus(object)) {
+            closeClient("invalid Nano status");
+            return;
+        }
+        last_valid_message_ms_ = millis();
+        setLinkState(NanoLinkState::UP);
+        return;
+    }
+
+    closeClient("unexpected stage-2 message");
+}
+
+bool GroundStationTcpServer::handleStatus(JsonObject object) {
+    const char *system_state = object["systemState"];
+    JsonObject links = object["links"].as<JsonObject>();
+    const char *nano_ti = links["nanoTi"];
+    if (!object["timestampMs"].is<uint32_t>() ||
+        system_state == nullptr ||
+        !object["armed"].is<bool>() ||
+        links.isNull() ||
+        nano_ti == nullptr ||
+        (strcmp(nano_ti, "UP") != 0 && strcmp(nano_ti, "DOWN") != 0)) {
+        return false;
+    }
+
+    const char *fault_code = object["faultCode"];
+    if (strlen(system_state) >= sizeof(vehicle_status_.system_state) ||
+        (fault_code != nullptr &&
+         strlen(fault_code) >= sizeof(vehicle_status_.fault_code))) {
+        return false;
+    }
+    const bool status_changed =
+        !vehicle_status_.valid ||
+        strcmp(vehicle_status_.system_state, system_state) != 0 ||
+        strcmp(
+            vehicle_status_.fault_code,
+            fault_code == nullptr ? "UNKNOWN" : fault_code
+        ) != 0;
+
+    NanoVehicleStatus next;
+    next.valid = true;
+    next.armed = object["armed"].as<bool>();
+    next.timestamp_ms = object["timestampMs"].as<uint32_t>();
+    if (object["activeCommandId"].is<uint32_t>()) {
+        next.active_command_id = object["activeCommandId"].as<uint32_t>();
+    }
+    if (object["distanceMm"].is<int32_t>()) {
+        next.distance_mm = object["distanceMm"].as<int32_t>();
+    }
+    if (object["headingMdeg"].is<int32_t>()) {
+        next.heading_mdeg = object["headingMdeg"].as<int32_t>();
+    }
+    if (object["lineErrorX100"].is<int16_t>()) {
+        next.line_error_x100 = object["lineErrorX100"].as<int16_t>();
+    }
+    snprintf(next.system_state, sizeof(next.system_state), "%s", system_state);
+    snprintf(
+        next.fault_code,
+        sizeof(next.fault_code),
+        "%s",
+        fault_code == nullptr ? "UNKNOWN" : fault_code
+    );
+    vehicle_status_ = next;
+    setTiOnline(strcmp(nano_ti, "UP") == 0);
+
+    if (status_changed) {
+        Serial.printf(
+            "MSPM0 status: system=%s armed=%s fault=%s\n",
+            vehicle_status_.system_state,
+            vehicle_status_.armed ? "true" : "false",
+            vehicle_status_.fault_code
+        );
+    }
+    return true;
 }
 
 void GroundStationTcpServer::queueHelloAck() {
@@ -235,6 +327,8 @@ void GroundStationTcpServer::closeClient(const char *reason) {
     transmit_head_ = 0;
     transmit_count_ = 0;
     hello_complete_ = false;
+    vehicle_status_ = NanoVehicleStatus();
+    setTiOnline(false);
     setLinkState(NanoLinkState::DOWN);
 }
 
@@ -275,4 +369,12 @@ void GroundStationTcpServer::setLinkState(NanoLinkState state) {
         name = "DEGRADED";
     }
     Serial.printf("Nano link state: %s\n", name);
+}
+
+void GroundStationTcpServer::setTiOnline(bool online) {
+    if (ti_online_ == online) {
+        return;
+    }
+    ti_online_ = online;
+    Serial.printf("TI link state: %s\n", online ? "UP" : "DOWN");
 }

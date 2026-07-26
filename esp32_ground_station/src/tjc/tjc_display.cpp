@@ -40,6 +40,15 @@ void TjcDisplay::showNano(NanoLinkState state) {
     setText(kTjcNanoTextComponent, text);
 }
 
+void TjcDisplay::showTi(bool online) {
+    if (ti_known_ && ti_online_ == online) {
+        return;
+    }
+    ti_known_ = true;
+    ti_online_ = online;
+    setText(kTjcTiTextComponent, online ? "UP" : "DOWN");
+}
+
 void TjcDisplay::setText(const char *component, const char *text) {
     char command[80];
     const int command_length = snprintf(

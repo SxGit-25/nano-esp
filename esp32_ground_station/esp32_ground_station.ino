@@ -50,4 +50,5 @@ void loop() {
         tcp_server.poll();
     }
     tjc_display.showNano(tcp_server.linkState());
+    tjc_display.showTi(tcp_server.tiOnline());
 }

@@ -8,6 +8,7 @@ import errno
 import logging
 import select
 import socket
+import threading
 import time
 
 from gateway.framed_json import FramedJsonError, FramedJsonParser, encode_message
@@ -76,6 +77,9 @@ class NanoTcpClient(object):
         self._reconnect_delay_s = self.config.reconnect_initial_s
         self._started_at = None
         self._had_handshake = False
+        self._published_status_lock = threading.Lock()
+        self._latest_published_status = None
+        self._ti_online = False
 
         self.ground_station_session_id = None
         self.connection_state = "DOWN"
@@ -101,6 +105,23 @@ class NanoTcpClient(object):
                 self.poll()
         finally:
             self.close("client stopped", reconnect=False)
+
+    def publish_status(self, message):
+        """Publish the newest status snapshot from a non-network thread."""
+
+        if (
+            not isinstance(message, dict)
+            or message.get("v") != PROTOCOL_VERSION
+            or message.get("type") != "status"
+        ):
+            raise ValueError("published message must be a v1 status object")
+        links = message.get("links")
+        if not isinstance(links, dict):
+            raise ValueError("published status must contain links")
+
+        with self._published_status_lock:
+            self._latest_published_status = message
+            self._ti_online = links.get("nanoTi") == "UP"
 
     def poll(self):
         """Run one bounded event-loop iteration for embedding or tests."""
@@ -149,6 +170,7 @@ class NanoTcpClient(object):
                 self.close("hello_ack timeout")
             return
 
+        self._queue_latest_status()
         age = now - self._last_rx_at
         if age >= self.config.link_down_timeout_s:
             self.close("peer heartbeat timeout")
@@ -347,16 +369,34 @@ class NanoTcpClient(object):
 
     def _queue_heartbeat(self, now):
         uptime_ms = int((now - self._started_at) * 1000.0)
-        self._queue_message(
-            {
-                "v": PROTOCOL_VERSION,
-                "type": "heartbeat",
-                "source": "nano",
-                "uptimeMs": uptime_ms,
-                "tiOnline": False,
-            }
-        )
+        with self._published_status_lock:
+            ti_online = self._ti_online
+        if not self._outbound:
+            self._queue_message(
+                {
+                    "v": PROTOCOL_VERSION,
+                    "type": "heartbeat",
+                    "source": "nano",
+                    "uptimeMs": uptime_ms,
+                    "tiOnline": ti_online,
+                }
+            )
         self._next_heartbeat_at = now + self.config.heartbeat_interval_s
+
+    def _queue_latest_status(self):
+        if self._outbound:
+            return
+        with self._published_status_lock:
+            message = self._latest_published_status
+            self._latest_published_status = None
+        if message is None:
+            return
+
+        outbound = dict(message)
+        links = dict(outbound["links"])
+        links["espNano"] = "UP"
+        outbound["links"] = links
+        self._queue_message(outbound)
 
     def _queue_message(self, message):
         self._outbound.extend(encode_message(message))

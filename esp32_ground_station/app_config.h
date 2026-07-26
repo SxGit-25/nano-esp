@@ -25,3 +25,4 @@ static const uint32_t kHelloTimeoutMs = 5000;
 /* Change these only to match the component names in the TJC HMI project. */
 static const char kTjcApTextComponent[] = "tAp";
 static const char kTjcNanoTextComponent[] = "tNano";
+static const char kTjcTiTextComponent[] = "tTi";

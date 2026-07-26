@@ -115,6 +115,62 @@ class NanoTcpClientTests(unittest.TestCase):
             client_thread.join(3.0)
             server.close()
 
+    def test_only_latest_serial_status_is_queued(self):
+        client = NanoTcpClient()
+        client._started_at = time.monotonic()
+        client.publish_status(
+            {
+                "v": 1,
+                "type": "status",
+                "timestampMs": 1,
+                "systemState": "IDLE",
+                "links": {"nanoTi": "DOWN"},
+            }
+        )
+        client.publish_status(
+            {
+                "v": 1,
+                "type": "status",
+                "timestampMs": 2,
+                "systemState": "ARMED",
+                "links": {"nanoTi": "UP"},
+            }
+        )
+
+        client._queue_latest_status()
+        messages = FramedJsonParser().feed(bytes(client._outbound))
+
+        self.assertEqual(1, len(messages))
+        self.assertEqual(2, messages[0]["timestampMs"])
+        self.assertEqual("UP", messages[0]["links"]["nanoTi"])
+        self.assertEqual("UP", messages[0]["links"]["espNano"])
+
+        client._outbound.clear()
+        client._queue_heartbeat(time.monotonic())
+        heartbeat = FramedJsonParser().feed(bytes(client._outbound))[0]
+        self.assertTrue(heartbeat["tiOnline"])
+
+    def test_status_waits_behind_unsent_network_data(self):
+        client = NanoTcpClient()
+        client._outbound.extend(b"pending")
+        client.publish_status(
+            {
+                "v": 1,
+                "type": "status",
+                "timestampMs": 3,
+                "systemState": "IDLE",
+                "links": {"nanoTi": "UP"},
+            }
+        )
+
+        client._queue_latest_status()
+        self.assertEqual(b"pending", bytes(client._outbound))
+
+        client._outbound.clear()
+        client._queue_latest_status()
+        messages = FramedJsonParser().feed(bytes(client._outbound))
+        self.assertEqual(3, messages[0]["timestampMs"])
+
 
 if __name__ == "__main__":
     unittest.main()

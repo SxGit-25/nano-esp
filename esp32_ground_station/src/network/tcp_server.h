@@ -13,6 +13,18 @@ enum class NanoLinkState {
     DEGRADED,
 };
 
+struct NanoVehicleStatus {
+    bool valid = false;
+    bool armed = false;
+    uint32_t timestamp_ms = 0;
+    uint32_t active_command_id = 0;
+    int32_t distance_mm = 0;
+    int32_t heading_mdeg = 0;
+    int16_t line_error_x100 = 0;
+    char system_state[20] = {};
+    char fault_code[32] = {};
+};
+
 class GroundStationTcpServer {
 public:
     explicit GroundStationTcpServer(uint16_t port);
@@ -21,6 +33,8 @@ public:
     void poll();
 
     NanoLinkState linkState() const;
+    bool tiOnline() const;
+    const NanoVehicleStatus &vehicleStatus() const;
     uint32_t groundStationSessionId() const;
 
 private:
@@ -38,12 +52,14 @@ private:
     void readClient();
     void flushTransmitQueue();
     void handleMessage(const String &json);
+    bool handleStatus(JsonObject object);
     void queueHelloAck();
     void queueHeartbeat();
     bool queueJson(const JsonDocument &document);
     void closeClient(const char *reason);
     void updateLinkTimeout();
     void setLinkState(NanoLinkState state);
+    void setTiOnline(bool online);
 
     WiFiServer server_;
     WiFiClient client_;
@@ -57,4 +73,6 @@ private:
     uint32_t last_valid_message_ms_ = 0;
     uint32_t next_heartbeat_ms_ = 0;
     NanoLinkState link_state_ = NanoLinkState::DOWN;
+    bool ti_online_ = false;
+    NanoVehicleStatus vehicle_status_;
 };

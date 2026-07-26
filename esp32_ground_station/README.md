@@ -1,16 +1,19 @@
-# ESP32-S3 地面站阶段 1（Arduino IDE）
+# ESP32-S3 地面站网络与状态接收（Arduino IDE）
 
 该工程是 TCP Server：ESP32-S3 建立 WPA2 SoftAP，固定地址
 `192.168.4.1`，监听端口 `8765`，只接受一个 Nano TCP Client。
 
-当前阶段仅包含网络链路：
+当前阶段包含网络链路和最小只读状态接收：
 
 - 4 字节小端长度前缀、1..4096 B、UTF-8 JSON 对象。
 - `hello / hello_ack`，ESP 每次启动生成一个非零随机
   `groundStationSessionId`，并在其运行期间保持不变。
 - 1 秒双向心跳；3 秒显示 DEGRADED，5 秒关闭连接。
 - `TCP_NODELAY` 与有界发送队列；没有任何运动、ARM、急停或 MSPM0 串口代码。
-- 通过 UART1 向 TJC 设置 `tAp.txt` 和 `tNano.txt`，显示 AP/Nano 状态。
+- 接收 Nano 周期发送的 MSPM0 状态快照，保存系统状态、故障、距离、航向和
+  循迹误差，但不接收或转发任何控制命令。
+- 通过 UART1 向 TJC 设置 `tAp.txt`、`tNano.txt` 和 `tTi.txt`，显示
+  AP/Nano/TI 链路状态。
 
 ## Arduino IDE 环境
 
@@ -49,7 +52,7 @@ WPA2 密码：
 `BOOT`。具体是否需要手动进入下载模式取决于开发板的自动复位电路。
 
 默认 TJC 接线是 GPIO4 TX -> TJC RX、GPIO5 RX <- TJC TX、共地。若 HMI
-控件名不是 `tAp` 与 `tNano`，在 `app_config.h` 修改两个集中定义。
+控件名不是 `tAp`、`tNano` 与 `tTi`，在 `app_config.h` 修改集中定义。
 
 ## Arduino 草图结构
 

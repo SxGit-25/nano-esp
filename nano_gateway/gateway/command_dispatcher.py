@@ -9,7 +9,15 @@ from collections import OrderedDict
 
 PROTOCOL_VERSION = 1
 SUPPORTED_COMMANDS = frozenset(
-    ("arm", "disarm", "stop", "estop", "clear_fault")
+    (
+        "arm",
+        "disarm",
+        "stop",
+        "estop",
+        "clear_fault",
+        "drive_distance",
+        "turn_relative",
+    )
 )
 
 _PRIORITY_ESTOP = 0
@@ -50,7 +58,14 @@ class CommandDispatcher(object):
             if session_id != self._current_session_id:
                 self._current_session_id = session_id
                 self._highest_command_id = 0
-                self._records = OrderedDict()
+                self._records = OrderedDict(
+                    (key, record)
+                    for key, record in self._records.items()
+                    if (
+                        record["state"] == "queued"
+                        and record["survive_reconnect"]
+                    )
+                )
 
     def end_session(self, session_id):
         """Disable admission and request cancellation after a TCP disconnect."""
@@ -59,6 +74,13 @@ class CommandDispatcher(object):
         if not _is_uint32_nonzero(session_id):
             return
         with self._lock:
+            for key, record in self._records.items():
+                if (
+                    key[0] == session_id
+                    and record["state"] == "queued"
+                    and record["command"] in ("stop", "disarm", "estop")
+                ):
+                    record["survive_reconnect"] = True
             self._fail_queued_locked(
                 session_id,
                 reason="LINK_LOST",
@@ -160,6 +182,7 @@ class CommandDispatcher(object):
                 "command": command,
                 "state": "queued",
                 "last_response": None,
+                "survive_reconnect": False,
             }
             self._records[key] = record
 
@@ -180,12 +203,12 @@ class CommandDispatcher(object):
                 )
                 self._set_response_locked(record, response, terminal=True)
                 return True
-            if args:
+            if not self._valid_args(command, args):
                 response = self._error_response(
                     ground_session_id,
                     command_id,
                     "INVALID_ARGUMENT",
-                    "{} does not accept arguments".format(command),
+                    "invalid arguments for {}".format(command),
                     "args",
                 )
                 self._set_response_locked(record, response, terminal=True)
@@ -398,6 +421,62 @@ class CommandDispatcher(object):
             command,
             json.dumps(args, ensure_ascii=False, sort_keys=True),
         )
+
+    @staticmethod
+    def _valid_args(command, args):
+        if command in ("arm", "disarm", "stop", "estop", "clear_fault"):
+            return not args
+        if command == "drive_distance":
+            expected = {
+                "distanceMm",
+                "speedMmPerSec",
+                "headingMode",
+                "endBehavior",
+                "timeoutMs",
+            }
+            return (
+                set(args) == expected and
+                isinstance(args["distanceMm"], int) and
+                not isinstance(args["distanceMm"], bool) and
+                -5000 <= args["distanceMm"] <= 5000 and
+                abs(args["distanceMm"]) >= 10 and
+                isinstance(args["speedMmPerSec"], int) and
+                not isinstance(args["speedMmPerSec"], bool) and
+                50 <= args["speedMmPerSec"] <= 1200 and
+                isinstance(args["headingMode"], int) and
+                not isinstance(args["headingMode"], bool) and
+                args["headingMode"] in (0, 1) and
+                isinstance(args["endBehavior"], int) and
+                not isinstance(args["endBehavior"], bool) and
+                args["endBehavior"] == 0 and
+                isinstance(args["timeoutMs"], int) and
+                not isinstance(args["timeoutMs"], bool) and
+                100 <= args["timeoutMs"] <= 60000
+            )
+        if command == "turn_relative":
+            expected = {
+                "angleMdeg",
+                "maxWheelSpeedMmPerSec",
+                "turnMode",
+                "timeoutMs",
+            }
+            return (
+                set(args) == expected and
+                isinstance(args["angleMdeg"], int) and
+                not isinstance(args["angleMdeg"], bool) and
+                -360000 <= args["angleMdeg"] <= 360000 and
+                args["angleMdeg"] != 0 and
+                isinstance(args["maxWheelSpeedMmPerSec"], int) and
+                not isinstance(args["maxWheelSpeedMmPerSec"], bool) and
+                50 <= args["maxWheelSpeedMmPerSec"] <= 1200 and
+                isinstance(args["turnMode"], int) and
+                not isinstance(args["turnMode"], bool) and
+                args["turnMode"] in (0, 1) and
+                isinstance(args["timeoutMs"], int) and
+                not isinstance(args["timeoutMs"], bool) and
+                100 <= args["timeoutMs"] <= 60000
+            )
+        return False
 
     @staticmethod
     def _request_key(request):

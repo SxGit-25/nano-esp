@@ -81,7 +81,16 @@ bool GroundStationTcpServer::requestCommand(
             );
             return false;
         }
-        return queueGetStatus();
+        if (!queueGetStatus()) {
+            setLocalRejectedResult(
+                0,
+                GroundStationCommand::GET_STATUS,
+                "TX_QUEUE_FULL"
+            );
+            return false;
+        }
+        setQueuedResult(0, GroundStationCommand::GET_STATUS);
+        return true;
     }
     if (!client_ || !client_.connected() || !hello_complete_) {
         setLocalRejectedResult(0, command, "NANO_LINK_DOWN");
@@ -106,7 +115,23 @@ bool GroundStationTcpServer::requestCommand(
     message["groundStationSessionId"] = ground_station_session_id_;
     message["id"] = command_id;
     message["cmd"] = groundStationCommandName(command);
-    message.createNestedObject("args");
+    JsonObject args = message.createNestedObject("args");
+    if (command == GroundStationCommand::DRIVE_FORWARD_500 ||
+        command == GroundStationCommand::DRIVE_BACKWARD_500) {
+        args["distanceMm"] = command ==
+            GroundStationCommand::DRIVE_FORWARD_500 ? 500 : -500;
+        args["speedMmPerSec"] = 200;
+        args["headingMode"] = 1;
+        args["endBehavior"] = 0;
+        args["timeoutMs"] = 6000;
+    } else if (command == GroundStationCommand::TURN_LEFT_90 ||
+               command == GroundStationCommand::TURN_RIGHT_90) {
+        args["angleMdeg"] = command == GroundStationCommand::TURN_LEFT_90 ?
+            -90000 : 90000;
+        args["maxWheelSpeedMmPerSec"] = 150;
+        args["turnMode"] = 0;
+        args["timeoutMs"] = 5000;
+    }
 
     TransmitPriority priority = TransmitPriority::NORMAL_COMMAND;
     if (command == GroundStationCommand::ESTOP) {
@@ -328,6 +353,23 @@ void GroundStationTcpServer::handleMessage(const String &json) {
             pending_status_request_generation_ == connection_generation_
         ) {
             pending_status_request_ = false;
+            if (
+                command_result_.valid &&
+                command_result_.ground_station_session_id ==
+                    ground_station_session_id_ &&
+                command_result_.id == 0 &&
+                command_result_.command ==
+                    GroundStationCommand::GET_STATUS &&
+                command_result_.state == NanoCommandResultState::QUEUED
+            ) {
+                command_result_.state = NanoCommandResultState::DONE;
+                snprintf(
+                    command_result_.detail,
+                    sizeof(command_result_.detail),
+                    "%s",
+                    "SNAPSHOT_RECEIVED"
+                );
+            }
         }
         last_valid_message_ms_ = millis();
         setLinkState(NanoLinkState::UP);

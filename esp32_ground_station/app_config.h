@@ -23,32 +23,16 @@ static const uint32_t kNanoLinkDownTimeoutMs = 5000;
 static const uint32_t kHelloTimeoutMs = 5000;
 static const uint32_t kTcpSendStallTimeoutMs = 2000;
 static const uint32_t kTjcRefreshIntervalMs = 1000;
-static const uint32_t kTjcStartupPageDurationMs = 2200;
-static const bool kRunTjcFullDebug = false;
-static const bool kRunTjcTxVisualTest = false;
 static const size_t kTjcMaxInputBytesPerPoll = 64;
+static const bool kRunTjcTxVisualTest = false;
 
 /* Change these only to match the component names in the TJC HMI project. */
-static const char kTjcMainPage[] = "main";
+/* These names match the global text components in the HMI project. */
 static const char kTjcApTextComponent[] = "tAp";
 static const char kTjcNanoTextComponent[] = "tNano";
 static const char kTjcTiTextComponent[] = "tTi";
-static const char kTjcSystemTextComponent[] = "tSystem";
-static const char kTjcArmedTextComponent[] = "tArmed";
 static const char kTjcFaultTextComponent[] = "tFault";
-static const char kTjcDistanceTextComponent[] = "tDistance";
-static const char kTjcHeadingTextComponent[] = "tHeading";
-static const char kTjcLineErrorTextComponent[] = "tLineError";
-static const char kTjcLeftSpeedTextComponent[] = "tLeftSpeed";
-static const char kTjcRightSpeedTextComponent[] = "tRightSpeed";
-static const char kTjcProgressTextComponent[] = "tProgress";
-static const char kTjcLapCountTextComponent[] = "tLapCount";
-static const char kTjcSegmentTextComponent[] = "tSegment";
-static const char kTjcControlTextComponent[] = "tControl";
-static const char kTjcCommandIdTextComponent[] = "tCmdId";
-static const char kTjcCommandNameTextComponent[] = "tCmdName";
-static const char kTjcCommandStateTextComponent[] = "tCmdState";
-static const char kTjcCommandDetailTextComponent[] = "tCmdDetail";
+static const char kTjcRxTextComponent[] = "tRx";
 
 /*
  * A TJC button sends one strict ASCII token followed by FF FF FF. This avoids
@@ -61,4 +45,8 @@ static const char kTjcStopEventToken[] = "GS:STOP";
 static const char kTjcEstopEventToken[] = "GS:ESTOP";
 static const char kTjcClearFaultEventToken[] = "GS:CLEAR_FAULT";
 static const char kTjcGetStatusEventToken[] = "GS:GET_STATUS";
+static const char kTjcForward500EventToken[] = "GS:FWD_500";
+static const char kTjcBackward500EventToken[] = "GS:BACK_500";
+static const char kTjcLeft90EventToken[] = "GS:LEFT_90";
+static const char kTjcRight90EventToken[] = "GS:RIGHT_90";
 static const char kTjcSyncEventToken[] = "GS:SYNC";

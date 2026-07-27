@@ -15,6 +15,8 @@ TYPE_ARM = 0x02
 TYPE_CANCEL = 0x03
 TYPE_EMERGENCY_STOP = 0x04
 TYPE_CLEAR_FAULT = 0x05
+TYPE_DRIVE_DISTANCE = 0x10
+TYPE_TURN_RELATIVE = 0x12
 
 COMPLETION_REASONS = {
     1: "TARGET_REACHED",
@@ -40,6 +42,8 @@ TERMINAL_DEADLINES_S = {
     TYPE_CANCEL: 2.5,
     TYPE_EMERGENCY_STOP: 1.5,
     TYPE_CLEAR_FAULT: 1.5,
+    TYPE_DRIVE_DISTANCE: 8.0,
+    TYPE_TURN_RELATIVE: 7.0,
 }
 
 
@@ -116,6 +120,36 @@ class _AsyncLinkAdapter(object):
             payload,
         )
         return command_id, ack, elapsed
+
+    def begin_drive_distance(
+        self,
+        distance_mm,
+        speed_mm_per_sec,
+        heading_mode,
+        end_behavior,
+        device_timeout_ms,
+    ):
+        return self.link.begin_drive_distance(
+            distance_mm,
+            speed_mm_per_sec,
+            heading_mode,
+            end_behavior,
+            device_timeout_ms,
+        )
+
+    def begin_turn_relative(
+        self,
+        angle_mdeg,
+        max_wheel_speed_mm_per_sec,
+        turn_mode,
+        device_timeout_ms,
+    ):
+        return self.link.begin_turn_relative(
+            angle_mdeg,
+            max_wheel_speed_mm_per_sec,
+            turn_mode,
+            device_timeout_ms,
+        )
 
     def take_terminal(self, command_id, request_type):
         if hasattr(self.link, "take_terminal"):
@@ -283,6 +317,10 @@ class CarSerialWorker(object):
             self._start_cancel(adapter, request)
         elif command == "estop":
             self._start_estop(adapter, request)
+        elif command == "drive_distance":
+            self._start_drive_distance(adapter, request)
+        elif command == "turn_relative":
+            self._start_turn_relative(adapter, request)
 
     def _start_arm(self, adapter, request):
         state = self.state_store.get_control_state()
@@ -336,6 +374,77 @@ class CarSerialWorker(object):
             TYPE_CLEAR_FAULT,
             adapter.begin_clear_fault,
             "RECOVERING",
+            role="main",
+        )
+
+    def _start_drive_distance(self, adapter, request):
+        state = self.state_store.get_control_state()
+        if not state["tiOnline"]:
+            self._reject_offline(request)
+            return
+        if not state["controlEnabled"]:
+            self.command_dispatcher.rejected(
+                request,
+                "NOT_ARMED",
+                "arm the MSPM0 before driving",
+            )
+            return
+        if self._has_main_transaction():
+            self.command_dispatcher.rejected(
+                request,
+                "BUSY",
+                "another MSPM0 main transaction is active",
+            )
+            return
+        args = request["args"]
+        self._begin_request(
+            adapter,
+            request,
+            "drive_distance",
+            TYPE_DRIVE_DISTANCE,
+            lambda: adapter.begin_drive_distance(
+                args["distanceMm"],
+                args["speedMmPerSec"],
+                args["headingMode"],
+                args["endBehavior"],
+                args["timeoutMs"],
+            ),
+            "EXECUTING",
+            role="main",
+        )
+
+    def _start_turn_relative(self, adapter, request):
+        state = self.state_store.get_control_state()
+        if not state["tiOnline"]:
+            self._reject_offline(request)
+            return
+        if not state["controlEnabled"]:
+            self.command_dispatcher.rejected(
+                request,
+                "NOT_ARMED",
+                "arm the MSPM0 before turning",
+            )
+            return
+        if self._has_main_transaction():
+            self.command_dispatcher.rejected(
+                request,
+                "BUSY",
+                "another MSPM0 main transaction is active",
+            )
+            return
+        args = request["args"]
+        self._begin_request(
+            adapter,
+            request,
+            "turn_relative",
+            TYPE_TURN_RELATIVE,
+            lambda: adapter.begin_turn_relative(
+                args["angleMdeg"],
+                args["maxWheelSpeedMmPerSec"],
+                args["turnMode"],
+                args["timeoutMs"],
+            ),
+            "EXECUTING",
             role="main",
         )
 

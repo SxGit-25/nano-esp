@@ -76,6 +76,36 @@ class CommandDispatcherTests(unittest.TestCase):
         unsupported = self.dispatcher.get_response_nowait(100)
         self.assertEqual("UNSUPPORTED_COMMAND", unsupported["error"]["code"])
 
+    def test_accepts_signed_drive_and_relative_turn_arguments(self):
+        drive = _command(
+            100,
+            1,
+            "drive_distance",
+            {
+                "distanceMm": -500,
+                "speedMmPerSec": 200,
+                "headingMode": 1,
+                "endBehavior": 0,
+                "timeoutMs": 6000,
+            },
+        )
+        self.assertTrue(self.dispatcher.submit(drive, 100))
+        self.assertEqual("drive_distance", self.dispatcher.get_request_nowait()["cmd"])
+
+        turn = _command(
+            100,
+            2,
+            "turn_relative",
+            {
+                "angleMdeg": -90000,
+                "maxWheelSpeedMmPerSec": 150,
+                "turnMode": 0,
+                "timeoutMs": 5000,
+            },
+        )
+        self.assertTrue(self.dispatcher.submit(turn, 100))
+        self.assertEqual("turn_relative", self.dispatcher.get_request_nowait()["cmd"])
+
     def test_malformed_fields_close_boundary_and_session_mismatch_rejects(self):
         malformed = _command(100, 1, "arm")
         malformed["id"] = True
@@ -95,6 +125,35 @@ class CommandDispatcherTests(unittest.TestCase):
         self.dispatcher.begin_session(200)
         stale = self.dispatcher.get_request_nowait()
         self.assertFalse(self.dispatcher.is_open(stale))
+
+    def test_new_session_preserves_queued_safety_commands_after_disconnect(self):
+        for command_id, command in enumerate(
+            ("stop", "disarm", "estop"),
+            start=1,
+        ):
+            self.assertTrue(
+                self.dispatcher.submit(
+                    _command(100, command_id, command),
+                    100,
+                )
+            )
+
+        self.dispatcher.end_session(100)
+        self.dispatcher.begin_session(200)
+
+        disconnect = self.dispatcher.get_request_nowait()
+        self.assertEqual("disconnect", disconnect["kind"])
+        retained = [
+            self.dispatcher.get_request_nowait()
+            for _ in range(3)
+        ]
+        self.assertEqual(
+            ["estop", "stop", "disarm"],
+            [request["cmd"] for request in retained],
+        )
+        self.assertTrue(
+            all(self.dispatcher.is_open(request) for request in retained)
+        )
 
     def test_estop_clears_normal_queue_and_all_queues_are_bounded(self):
         for command_id in range(1, MAX_PENDING_REQUESTS + 2):

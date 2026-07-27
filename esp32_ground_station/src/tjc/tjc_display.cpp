@@ -22,6 +22,8 @@ bool vehicleStatusEqual(
         return true;
     }
     return left.armed == right.armed &&
+        left.has_control_enabled == right.has_control_enabled &&
+        left.control_enabled == right.control_enabled &&
         left.has_active_command_id == right.has_active_command_id &&
         left.has_distance_mm == right.has_distance_mm &&
         left.has_heading_mdeg == right.has_heading_mdeg &&
@@ -38,6 +40,36 @@ bool vehicleStatusEqual(
         left.segment_index == right.segment_index &&
         strcmp(left.system_state, right.system_state) == 0 &&
         strcmp(left.fault_code, right.fault_code) == 0;
+}
+
+bool commandResultEqual(
+    const NanoCommandResult &left,
+    const NanoCommandResult &right
+) {
+    if (left.valid != right.valid) {
+        return false;
+    }
+    if (!left.valid) {
+        return true;
+    }
+    return left.has_car_command_id == right.has_car_command_id &&
+        left.ground_station_session_id ==
+            right.ground_station_session_id &&
+        left.id == right.id &&
+        left.car_command_id == right.car_command_id &&
+        left.command == right.command &&
+        left.state == right.state &&
+        strcmp(left.detail, right.detail) == 0;
+}
+
+bool tokenEqual(
+    const uint8_t *frame,
+    size_t frame_length,
+    const char *token
+) {
+    const size_t token_length = strlen(token);
+    return frame_length == token_length &&
+        memcmp(frame, token, token_length) == 0;
 }
 
 void formatInt32(char *buffer, size_t length, bool valid, int32_t value) {
@@ -59,6 +91,7 @@ void formatUint8(char *buffer, size_t length, bool valid, uint8_t value) {
 }  // namespace
 
 void TjcDisplay::begin() {
+    event_reader_.reset();
     tx_visual_test_active_ = kRunTjcTxVisualTest;
     if (tx_visual_test_active_) {
         Serial1.begin(
@@ -101,7 +134,7 @@ void TjcDisplay::begin() {
     Serial1.begin(
         kGroundStationBaud,
         SERIAL_8N1,
-        -1,
+        kTjcRxPin,
         kTjcTxPin
     );
 
@@ -283,6 +316,54 @@ void TjcDisplay::rememberTxCommand(const char *command) {
         static_cast<uint8_t>((tx_history_next_ + 1) % kTxHistoryCapacity);
 }
 
+bool TjcDisplay::pollEvent(TjcInputEvent &event) {
+    size_t processed = 0;
+    while (
+        Serial1.available() > 0 &&
+        processed < kTjcMaxInputBytesPerPoll
+    ) {
+        const int next = Serial1.read();
+        if (next < 0) {
+            break;
+        }
+        ++processed;
+        processRxByte(static_cast<uint8_t>(next));
+        if (rx_ff_count_ == 3) {
+            processRxFrame();
+        }
+        const TjcEventReader::Result result =
+            event_reader_.append(static_cast<uint8_t>(next));
+        if (result == TjcEventReader::Result::FRAME) {
+            if (decodeEvent(
+                event_reader_.frame(),
+                event_reader_.frameLength(),
+                event
+            )) {
+                Serial.printf(
+                    "TJC event accepted, length=%u\n",
+                    static_cast<unsigned int>(event_reader_.frameLength())
+                );
+                return true;
+            }
+            Serial.printf(
+                "Ignoring unknown TJC frame, length=%u\n",
+                static_cast<unsigned int>(event_reader_.frameLength())
+            );
+        } else if (result == TjcEventReader::Result::DISCARDED) {
+            Serial.println("Discarded oversized TJC frame");
+        }
+    }
+    return false;
+}
+
+void TjcDisplay::forceRefresh() {
+    ap_known_ = false;
+    nano_known_ = false;
+    ti_known_ = false;
+    vehicle_known_ = false;
+    command_result_known_ = false;
+}
+
 void TjcDisplay::showAp(bool ready) {
     if (tx_visual_test_active_) {
         return;
@@ -365,6 +446,9 @@ void TjcDisplay::refresh() {
     if (vehicle_known_) {
         writeVehicleStatus(vehicle_status_);
     }
+    if (command_result_known_) {
+        writeCommandResult(command_result_);
+    }
 }
 
 void TjcDisplay::synchronizeDisplay() {
@@ -430,6 +514,7 @@ void TjcDisplay::writeVehicleStatus(const NanoVehicleStatus &status) {
     if (!status.valid) {
         setText(kTjcSystemTextComponent, "--");
         setText(kTjcArmedTextComponent, "--");
+        setText(kTjcControlTextComponent, "--");
         setText(kTjcFaultTextComponent, "--");
         setText(kTjcDistanceTextComponent, "--");
         setText(kTjcHeadingTextComponent, "--");
@@ -445,6 +530,12 @@ void TjcDisplay::writeVehicleStatus(const NanoVehicleStatus &status) {
     char value[24];
     setText(kTjcSystemTextComponent, status.system_state);
     setText(kTjcArmedTextComponent, status.armed ? "YES" : "NO");
+    setText(
+        kTjcControlTextComponent,
+        !status.has_control_enabled
+            ? "--"
+            : (status.control_enabled ? "ENABLED" : "LOCKED")
+    );
     setText(kTjcFaultTextComponent, status.fault_code);
 
     formatInt32(value, sizeof(value), status.has_distance_mm, status.distance_mm);
@@ -476,14 +567,108 @@ void TjcDisplay::writeVehicleStatus(const NanoVehicleStatus &status) {
     setText(kTjcSegmentTextComponent, value);
 }
 
+void TjcDisplay::showCommandResult(const NanoCommandResult &result) {
+    if (tx_visual_test_active_) {
+        return;
+    }
+
+    if (
+        command_result_known_ &&
+        commandResultEqual(command_result_, result)
+    ) {
+        return;
+    }
+    command_result_known_ = true;
+    command_result_ = result;
+    writeCommandResult(result);
+}
+
+void TjcDisplay::writeCommandResult(const NanoCommandResult &result) {
+    if (!result.valid) {
+        setText(kTjcCommandIdTextComponent, "--");
+        setText(kTjcCommandNameTextComponent, "--");
+        setText(kTjcCommandStateTextComponent, "--");
+        setText(kTjcCommandDetailTextComponent, "--");
+        return;
+    }
+
+    char command_id[16];
+    if (result.id == 0) {
+        snprintf(command_id, sizeof(command_id), "--");
+    } else {
+        snprintf(
+            command_id,
+            sizeof(command_id),
+            "%lu",
+            static_cast<unsigned long>(result.id)
+        );
+    }
+    setText(kTjcCommandIdTextComponent, command_id);
+    setText(
+        kTjcCommandNameTextComponent,
+        groundStationCommandDisplayName(result.command)
+    );
+    setText(
+        kTjcCommandStateTextComponent,
+        nanoCommandResultStateName(result.state)
+    );
+    setText(
+        kTjcCommandDetailTextComponent,
+        result.detail[0] == '\0' ? "--" : result.detail
+    );
+}
+
+bool TjcDisplay::decodeEvent(
+    const uint8_t *frame,
+    size_t length,
+    TjcInputEvent &event
+) const {
+    event.type = TjcInputEventType::COMMAND;
+    if (tokenEqual(frame, length, kTjcArmEventToken)) {
+        event.command = GroundStationCommand::ARM;
+    } else if (tokenEqual(frame, length, kTjcDisarmEventToken)) {
+        event.command = GroundStationCommand::DISARM;
+    } else if (tokenEqual(frame, length, kTjcStopEventToken)) {
+        event.command = GroundStationCommand::STOP;
+    } else if (tokenEqual(frame, length, kTjcEstopEventToken)) {
+        event.command = GroundStationCommand::ESTOP;
+    } else if (tokenEqual(frame, length, kTjcClearFaultEventToken)) {
+        event.command = GroundStationCommand::CLEAR_FAULT;
+    } else if (tokenEqual(frame, length, kTjcGetStatusEventToken)) {
+        event.command = GroundStationCommand::GET_STATUS;
+    } else if (tokenEqual(frame, length, kTjcSyncEventToken)) {
+        event.type = TjcInputEventType::SYNC;
+    } else {
+        return false;
+    }
+    return true;
+}
+
 void TjcDisplay::setText(const char *component, const char *text) {
-    char command[80];
+    char sanitized[64];
+    size_t sanitized_length = 0;
+    while (
+        text[sanitized_length] != '\0' &&
+        sanitized_length < sizeof(sanitized) - 1
+    ) {
+        const uint8_t byte =
+            static_cast<uint8_t>(text[sanitized_length]);
+        sanitized[sanitized_length] =
+            byte >= 0x20 && byte <= 0x7E &&
+                byte != '"' && byte != '\\'
+            ? static_cast<char>(byte)
+            : '?';
+        ++sanitized_length;
+    }
+    sanitized[sanitized_length] = '\0';
+
+    char command[112];
     const int command_length = snprintf(
         command,
         sizeof(command),
         "%s.txt=\"%s\"",
         component,
-        text
+        sanitized
     );
     if (command_length <= 0 || command_length >= static_cast<int>(sizeof(command))) {
         return;

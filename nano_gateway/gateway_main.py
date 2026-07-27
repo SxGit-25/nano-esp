@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the ESP32 gateway with an optional read-only MSPM0 status bridge."""
+"""Run the ESP32 gateway with an optional MSPM0 command/status bridge."""
 
 import argparse
 import logging
@@ -9,20 +9,21 @@ import sys
 import threading
 
 from gateway.car_serial_worker import CarSerialWorker, load_car_serial_link
+from gateway.command_dispatcher import CommandDispatcher
 from gateway.state_store import StateStore
 from gateway.tcp_client import GatewayConfig, NanoTcpClient
 
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="ESP32 TCP client and read-only MSPM0 status bridge"
+        description="ESP32 TCP client and MSPM0 command/status bridge"
     )
     parser.add_argument("--host", default="192.168.4.1")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--log-level", default="INFO")
     parser.add_argument(
         "--serial-port",
-        help="enable read-only MSPM0 status using this serial device",
+        help="enable MSPM0 commands and status using this serial device",
     )
     parser.add_argument(
         "--mspm0-link-dir",
@@ -51,9 +52,11 @@ def main():
     signal.signal(signal.SIGTERM, request_stop)
 
     state_store = StateStore()
+    command_dispatcher = CommandDispatcher(state_store)
     client = NanoTcpClient(
         GatewayConfig(host=args.host, port=args.port),
         state_store=state_store,
+        command_dispatcher=command_dispatcher,
     )
     serial_thread = None
     if args.serial_port:
@@ -66,6 +69,7 @@ def main():
             port=args.serial_port,
             link_factory=link_factory,
             state_store=state_store,
+            command_dispatcher=command_dispatcher,
         )
         serial_thread = threading.Thread(
             target=worker.run,

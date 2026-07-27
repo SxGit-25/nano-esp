@@ -52,6 +52,9 @@ class StateStore(object):
         self._lock = threading.Lock()
         self._revision = 1
         self._esp_nano_link = "DOWN"
+        self._control_enabled = False
+        self._mapped_command_id = None
+        self._mapped_car_command_id = None
         self._reset_ti_state()
 
     def set_esp_nano_link(self, state):
@@ -64,9 +67,18 @@ class StateStore(object):
 
     def mark_ti_disconnected(self):
         with self._lock:
-            if self._nano_ti_link == "DOWN" and self._system_state == "DISCONNECTED":
+            if (
+                self._nano_ti_link == "DOWN"
+                and self._system_state == "DISCONNECTED"
+                and not self._control_enabled
+                and self._mapped_command_id is None
+                and self._mapped_car_command_id is None
+            ):
                 return
             self._reset_ti_state()
+            self._control_enabled = False
+            self._mapped_command_id = None
+            self._mapped_car_command_id = None
             self._revision += 1
 
     def update_from_mspm0(self, status, hello):
@@ -82,7 +94,14 @@ class StateStore(object):
                 "UNKNOWN_{}".format(system_state),
             )
             self._armed = system_state in (2, 3, 4)
-            self._active_command_id = status["reported_command_id"] or None
+            if not self._armed or fault_code != 0:
+                self._control_enabled = False
+            self._active_car_command_id = (
+                status["reported_command_id"]
+                if transaction_state in (1, 2, 3)
+                and status["reported_command_id"] != 0
+                else None
+            )
             self._fault_code = FAULT_CODE_NAMES.get(
                 fault_code,
                 "UNKNOWN_{}".format(fault_code),
@@ -104,10 +123,65 @@ class StateStore(object):
             self._ti_capability_flags = hello.get("capability_flags")
             self._revision += 1
 
+    def set_control_enabled(self, enabled):
+        """Set Nano's admission lock without changing MSPM0 armed state."""
+
+        enabled = bool(enabled)
+        with self._lock:
+            if self._control_enabled != enabled:
+                self._control_enabled = enabled
+                self._revision += 1
+
+    def map_active_command(self, command_id, car_command_id):
+        """Associate an ESP command id with its independent V1.1 id."""
+
+        with self._lock:
+            if (
+                self._mapped_command_id == command_id
+                and self._mapped_car_command_id == car_command_id
+            ):
+                return
+            self._mapped_command_id = command_id
+            self._mapped_car_command_id = car_command_id
+            self._revision += 1
+
+    def clear_active_command(self, car_command_id=None):
+        with self._lock:
+            if (
+                car_command_id is not None
+                and self._mapped_car_command_id != car_command_id
+            ):
+                return
+            if (
+                self._mapped_command_id is None
+                and self._mapped_car_command_id is None
+            ):
+                return
+            self._mapped_command_id = None
+            self._mapped_car_command_id = None
+            self._revision += 1
+
     @property
     def ti_online(self):
         with self._lock:
             return self._nano_ti_link == "UP"
+
+    def get_control_state(self):
+        with self._lock:
+            return {
+                "tiOnline": self._nano_ti_link == "UP",
+                "systemState": self._system_state,
+                "armed": self._armed,
+                "controlEnabled": self._control_enabled,
+                "faultCode": self._fault_code,
+                "activeCommandId": self._mapped_command_id,
+                "activeCarCommandId": (
+                    self._mapped_car_command_id
+                    if self._mapped_car_command_id is not None
+                    else self._active_car_command_id
+                ),
+                "transactionState": self._transaction_state,
+            }
 
     def build_message(self, message_type):
         if message_type not in ("snapshot", "status"):
@@ -120,7 +194,13 @@ class StateStore(object):
                 "timestampMs": self._uptime_ms(),
                 "systemState": self._system_state,
                 "armed": self._armed,
-                "activeCommandId": self._active_command_id,
+                "controlEnabled": self._control_enabled,
+                "activeCommandId": self._mapped_command_id,
+                "activeCarCommandId": (
+                    self._mapped_car_command_id
+                    if self._mapped_car_command_id is not None
+                    else self._active_car_command_id
+                ),
                 "activeTaskId": None,
                 "faultCode": self._fault_code,
                 "transactionState": self._transaction_state,
@@ -148,7 +228,7 @@ class StateStore(object):
         self._nano_ti_link = "DOWN"
         self._system_state = "DISCONNECTED"
         self._armed = False
-        self._active_command_id = None
+        self._active_car_command_id = None
         self._fault_code = "NONE"
         self._transaction_state = "NONE"
         self._motion_type = None

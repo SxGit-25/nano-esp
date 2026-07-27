@@ -11,6 +11,10 @@ if NANO_GATEWAY_DIR not in sys.path:
     sys.path.insert(0, NANO_GATEWAY_DIR)
 
 from gateway.framed_json import FramedJsonParser, encode_message  # noqa: E402
+from gateway.command_dispatcher import (  # noqa: E402
+    MAX_PENDING_RESPONSES,
+    CommandDispatcher,
+)
 from gateway.state_store import StateStore  # noqa: E402
 from gateway.tcp_client import GatewayConfig, NanoTcpClient  # noqa: E402
 
@@ -111,6 +115,21 @@ class _ReconnectServer(object):
 
 
 class NanoTcpClientTests(unittest.TestCase):
+    @staticmethod
+    def _complete_handshake(client, session_id=100):
+        client._started_at = time.monotonic()
+        client._connected_at = time.monotonic()
+        client._handle_message(
+            {
+                "v": 1,
+                "type": "hello_ack",
+                "role": "esp32",
+                "version": "2.1",
+                "groundStationSessionId": session_id,
+            }
+        )
+        client._outbound.clear()
+
     def test_hello_heartbeat_and_reconnect(self):
         server = _ReconnectServer()
         server.start()
@@ -206,6 +225,82 @@ class NanoTcpClientTests(unittest.TestCase):
 
         self.assertEqual(1, len(messages))
         self.assertEqual("heartbeat", messages[0]["type"])
+
+    def test_command_is_queued_and_result_is_framed_without_uart_access(self):
+        state_store = StateStore()
+        dispatcher = CommandDispatcher(state_store)
+        client = NanoTcpClient(
+            state_store=state_store,
+            command_dispatcher=dispatcher,
+        )
+        self._complete_handshake(client)
+
+        self.assertTrue(
+            client._handle_message(
+                {
+                    "v": 1,
+                    "type": "command",
+                    "groundStationSessionId": 100,
+                    "id": 7,
+                    "cmd": "arm",
+                    "args": {},
+                }
+            )
+        )
+        request = dispatcher.get_request_nowait()
+        dispatcher.accepted(request, "CALIBRATING", 55)
+        self.assertTrue(client._queue_command_response())
+        response = FramedJsonParser().feed(bytes(client._outbound))[0]
+
+        self.assertEqual("accepted", response["type"])
+        self.assertEqual(100, response["groundStationSessionId"])
+        self.assertEqual(7, response["id"])
+        self.assertEqual(55, response["carCommandId"])
+
+    def test_get_status_returns_session_bound_snapshot(self):
+        client = NanoTcpClient()
+        self._complete_handshake(client)
+
+        self.assertTrue(
+            client._handle_message(
+                {
+                    "v": 1,
+                    "type": "get_status",
+                    "groundStationSessionId": 100,
+                }
+            )
+        )
+        snapshot = FramedJsonParser().feed(bytes(client._outbound))[0]
+        self.assertEqual("snapshot", snapshot["type"])
+        self.assertEqual(100, snapshot["groundStationSessionId"])
+
+    def test_response_overflow_closes_session_and_disables_control(self):
+        state_store = StateStore()
+        dispatcher = CommandDispatcher(state_store)
+        client = NanoTcpClient(
+            state_store=state_store,
+            command_dispatcher=dispatcher,
+        )
+        self._complete_handshake(client)
+        state_store.set_control_enabled(True)
+        for command_id in range(1, MAX_PENDING_RESPONSES + 2):
+            dispatcher.submit(
+                {
+                    "v": 1,
+                    "type": "command",
+                    "groundStationSessionId": 100,
+                    "id": command_id,
+                    "cmd": "unsupported",
+                    "args": {},
+                },
+                100,
+            )
+
+        self.assertFalse(client._queue_command_response())
+        self.assertEqual("DOWN", client.connection_state)
+        self.assertFalse(
+            state_store.get_control_state()["controlEnabled"]
+        )
 
 
 if __name__ == "__main__":

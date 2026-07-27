@@ -50,11 +50,20 @@ void setup() {
 }
 
 void loop() {
+    TjcInputEvent input_event;
+    if (tjc_display.pollEvent(input_event)) {
+        if (input_event.type == TjcInputEventType::SYNC) {
+            tjc_display.forceRefresh();
+        } else {
+            tcp_server.requestCommand(input_event.command);
+        }
+    }
     if (soft_ap_ready) {
         tcp_server.poll();
     }
     tjc_display.showNano(tcp_server.linkState());
     tjc_display.showTi(tcp_server.tiOnline());
     tjc_display.showVehicleStatus(tcp_server.vehicleStatus());
+    tjc_display.showCommandResult(tcp_server.commandResult());
     tjc_display.poll();
 }

@@ -49,6 +49,9 @@ class StateStoreTests(unittest.TestCase):
         self.assertEqual("snapshot", snapshot["type"])
         self.assertEqual(125, snapshot["timestampMs"])
         self.assertEqual("DISCONNECTED", snapshot["systemState"])
+        self.assertFalse(snapshot["controlEnabled"])
+        self.assertIsNone(snapshot["activeCommandId"])
+        self.assertIsNone(snapshot["activeCarCommandId"])
         self.assertEqual("DOWN", snapshot["links"]["espNano"])
         self.assertEqual("DOWN", snapshot["links"]["nanoTi"])
         self.assertIsNone(snapshot["leftWheelSpeedMmPerSec"])
@@ -64,6 +67,9 @@ class StateStoreTests(unittest.TestCase):
         online_revision, online = store.build_message("status")
         self.assertEqual("EXECUTING", online["systemState"])
         self.assertTrue(online["armed"])
+        self.assertFalse(online["controlEnabled"])
+        self.assertIsNone(online["activeCommandId"])
+        self.assertEqual(42, online["activeCarCommandId"])
         self.assertEqual(-8, online["lineErrorX100"])
         self.assertEqual("UP", online["links"]["nanoTi"])
 
@@ -74,6 +80,26 @@ class StateStoreTests(unittest.TestCase):
         self.assertFalse(disconnected["armed"])
         self.assertIsNone(disconnected["distanceMm"])
         self.assertEqual("DOWN", disconnected["links"]["nanoTi"])
+
+    def test_control_admission_is_distinct_from_physical_armed_state(self):
+        store = StateStore()
+        store.update_from_mspm0(
+            _running_status(),
+            {"boot_id": 123, "capability_flags": 0x55},
+        )
+        store.set_control_enabled(True)
+        store.map_active_command(9, 42)
+
+        _, status = store.build_message("status")
+        self.assertTrue(status["armed"])
+        self.assertTrue(status["controlEnabled"])
+        self.assertEqual(9, status["activeCommandId"])
+        self.assertEqual(42, status["activeCarCommandId"])
+
+        store.set_control_enabled(False)
+        _, disarmed = store.build_message("status")
+        self.assertTrue(disarmed["armed"])
+        self.assertFalse(disarmed["controlEnabled"])
 
 
 if __name__ == "__main__":

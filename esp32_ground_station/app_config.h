@@ -26,6 +26,7 @@ static const uint32_t kTjcRefreshIntervalMs = 1000;
 static const uint32_t kTjcStartupPageDurationMs = 2200;
 static const bool kRunTjcFullDebug = false;
 static const bool kRunTjcTxVisualTest = false;
+static const size_t kTjcMaxInputBytesPerPoll = 64;
 
 /* Change these only to match the component names in the TJC HMI project. */
 static const char kTjcMainPage[] = "main";
@@ -43,3 +44,21 @@ static const char kTjcRightSpeedTextComponent[] = "tRightSpeed";
 static const char kTjcProgressTextComponent[] = "tProgress";
 static const char kTjcLapCountTextComponent[] = "tLapCount";
 static const char kTjcSegmentTextComponent[] = "tSegment";
+static const char kTjcControlTextComponent[] = "tControl";
+static const char kTjcCommandIdTextComponent[] = "tCmdId";
+static const char kTjcCommandNameTextComponent[] = "tCmdName";
+static const char kTjcCommandStateTextComponent[] = "tCmdState";
+static const char kTjcCommandDetailTextComponent[] = "tCmdDetail";
+
+/*
+ * A TJC button sends one strict ASCII token followed by FF FF FF. This avoids
+ * coupling firmware to unknown page/component IDs. STOP and ESTOP should be
+ * emitted by the button Press Event; other commands by the Release Event.
+ */
+static const char kTjcArmEventToken[] = "GS:ARM";
+static const char kTjcDisarmEventToken[] = "GS:DISARM";
+static const char kTjcStopEventToken[] = "GS:STOP";
+static const char kTjcEstopEventToken[] = "GS:ESTOP";
+static const char kTjcClearFaultEventToken[] = "GS:CLEAR_FAULT";
+static const char kTjcGetStatusEventToken[] = "GS:GET_STATUS";
+static const char kTjcSyncEventToken[] = "GS:SYNC";

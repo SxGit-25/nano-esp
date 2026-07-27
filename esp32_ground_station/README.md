@@ -3,17 +3,22 @@
 该工程是 TCP Server：ESP32-S3 建立 WPA2 SoftAP，固定地址
 `192.168.4.1`，监听端口 `8765`，只接受一个 Nano TCP Client。
 
-当前阶段包含网络链路和最小只读状态接收：
+当前阶段包含网络链路、状态接收和阶段 3 基础安全命令：
 
 - 4 字节小端长度前缀、1..4096 B、UTF-8 JSON 对象。
 - `hello / hello_ack`，ESP 每次启动生成一个非零随机
   `groundStationSessionId`，并在其运行期间保持不变。
 - 1 秒双向心跳；3 秒显示 DEGRADED，5 秒关闭连接。
-- `TCP_NODELAY` 与有界发送队列；没有任何运动、ARM、急停或 MSPM0 串口代码。
+- `TCP_NODELAY` 与有界优先级发送队列；已部分发送的帧不会被插队，
+  `estop` 最高优先，`stop / disarm / clear_fault` 使用安全优先级。
 - 接收 Nano 握手后的 `snapshot` 和周期 `status`，保存系统状态、故障、距离、
-  航向和循迹误差，但不接收或转发任何控制命令。
+  航向、循迹误差以及与 TI `armed` 分离的 Nano `controlEnabled`。
+- 发送 `arm / disarm / stop / estop / clear_fault` 标准命令，以及无命令 ID 的
+  `get_status`；命令使用本次 `groundStationSessionId` 和单调递增 ID。
+- 校验并保存 Nano 返回的 `accepted / rejected / done / failed`，断线时清空
+  未发送帧和旧连接命令记录。
 - 通过UART1向TJC显示AP/Nano/TI链路、系统状态、armed、故障、距离、航向、
-  循迹误差、进度和事件计数；V1.1没有的左右轮速度显示`--`。
+  循迹误差、控制准入和命令结果；V1.1没有的左右轮速度显示`--`。
 
 ## Arduino IDE 环境
 
@@ -129,6 +134,34 @@ tAp.txt="UART OK" FF FF FF
 6. 只有原始字节证据明确指向某一层时，才修改该层的协议、代码、HMI或
    接线。
 
+阶段 3 的 TJC 输入不依赖未知页面号或控件号。按钮事件发送严格 ASCII token，
+再发送三个 `0xFF` 结束字节，例如：
+
+```text
+prints "GS:ARM",0
+printh FF FF FF
+```
+
+可用 token 是 `GS:ARM`、`GS:DISARM`、`GS:STOP`、`GS:ESTOP`、
+`GS:CLEAR_FAULT`、`GS:GET_STATUS` 和页面刷新用的 `GS:SYNC`。STOP、ESTOP
+在 Press Event 发送，其余命令在 Release Event 发送。显示控件名和 token 都
+集中在 `app_config.h`，命令结果控件默认为 `tCmdId / tCmdName / tCmdState /
+tCmdDetail`，Nano 上层准入状态控件为 `tControl`。
+
+## 不接硬件的主机测试
+
+发送优先级、部分帧保护、TJC分帧和旧命令结果隔离可在macOS/Linux使用C++11
+编译器测试：
+
+```bash
+c++ -std=c++11 -Wall -Wextra -Werror \
+  tests/host_tests.cpp \
+  src/network/transmit_queue.cpp \
+  src/tjc/tjc_event_reader.cpp \
+  -o /tmp/nano_esp_phase3_host_tests
+/tmp/nano_esp_phase3_host_tests
+```
+
 ## Arduino 草图结构
 
 ```text
@@ -141,9 +174,15 @@ esp32_ground_station/
     ├── network/
     │   ├── framed_json.h
     │   ├── framed_json.cpp
+    │   ├── transmit_queue.h
+    │   ├── transmit_queue.cpp
     │   ├── tcp_server.h
     │   └── tcp_server.cpp
+    ├── commands/
+    │   └── ground_station_command.h
     └── tjc/
+        ├── tjc_event_reader.h
+        ├── tjc_event_reader.cpp
         ├── tjc_display.h
         └── tjc_display.cpp
 ```

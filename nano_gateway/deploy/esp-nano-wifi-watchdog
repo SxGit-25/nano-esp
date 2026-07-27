@@ -1,0 +1,38 @@
+#!/bin/sh
+
+connection_name="ESP_Nano"
+interface_name="wlan0"
+esp_address="192.168.4.1"
+failure_limit=3
+failure_count=0
+check_interval_s=2
+
+while true; do
+    current_connection="$(
+        nmcli -g GENERAL.CONNECTION device show "$interface_name" 2>/dev/null
+    )"
+
+    if [ "$current_connection" != "$connection_name" ]; then
+        failure_count=0
+        nmcli connection up "$connection_name" ifname "$interface_name" \
+            >/dev/null 2>&1 || true
+    elif ping -I "$interface_name" -c 1 -W 1 "$esp_address" \
+        >/dev/null 2>&1; then
+        failure_count=0
+    else
+        failure_count=$((failure_count + 1))
+        if [ "$failure_count" -ge "$failure_limit" ]; then
+            logger -t esp-nano-wifi-watchdog \
+                "ESP_Nano is associated but unreachable; reconnecting wlan0"
+            nmcli connection down "$connection_name" >/dev/null 2>&1 ||
+                nmcli device disconnect "$interface_name" >/dev/null 2>&1 ||
+                true
+            sleep 1
+            nmcli connection up "$connection_name" ifname "$interface_name" \
+                >/dev/null 2>&1 || true
+            failure_count=0
+        fi
+    fi
+
+    sleep "$check_interval_s"
+done

@@ -1,7 +1,7 @@
-"""Non-blocking stage-1 TCP client for the ESP32 ground station.
+"""Non-blocking TCP client for the ESP32 ground station.
 
 This module deliberately does not access the Nano--MSPM0 UART. It only owns
-the Wi-Fi TCP session, hello handshake, heartbeats and reconnect behaviour.
+the Wi-Fi session and passes validated commands through a thread-safe queue.
 """
 
 import errno
@@ -11,6 +11,8 @@ import socket
 import time
 
 from gateway.framed_json import FramedJsonError, FramedJsonParser, encode_message
+from gateway.command_dispatcher import CommandDispatcher
+from gateway.state_store import StateStore
 
 
 PROTOCOL_VERSION = 1
@@ -59,7 +61,14 @@ class GatewayConfig(object):
 class NanoTcpClient(object):
     """TCP client with hello, 1 s heartbeat and bounded reconnect backoff."""
 
-    def __init__(self, config=None, logger=None, version="2.1"):
+    def __init__(
+        self,
+        config=None,
+        logger=None,
+        version="2.1",
+        state_store=None,
+        command_dispatcher=None,
+    ):
         self.config = config or GatewayConfig()
         self.logger = logger or logging.getLogger(__name__)
         self.version = version
@@ -76,6 +85,11 @@ class NanoTcpClient(object):
         self._reconnect_delay_s = self.config.reconnect_initial_s
         self._started_at = None
         self._had_handshake = False
+        self._last_state_revision = 0
+        self.state_store = state_store or StateStore()
+        self.command_dispatcher = (
+            command_dispatcher or CommandDispatcher(self.state_store)
+        )
 
         self.ground_station_session_id = None
         self.connection_state = "DOWN"
@@ -155,8 +169,11 @@ class NanoTcpClient(object):
             return
         if age >= self.config.link_degraded_timeout_s:
             self._set_connection_state("DEGRADED")
+        if not self._queue_command_response():
+            return
         if now >= self._next_heartbeat_at:
             self._queue_heartbeat(now)
+        self._queue_latest_status()
 
     def close(self, reason, reconnect=True):
         """Close the active socket and, unless stopped, schedule a reconnect."""
@@ -167,6 +184,8 @@ class NanoTcpClient(object):
             self._connected_at is not None
             and now - self._connected_at >= self.config.reconnect_reset_s
         )
+        session_id = self.ground_station_session_id
+        had_handshake = self._handshake_ready
         if self._socket is not None:
             try:
                 self._socket.close()
@@ -181,7 +200,10 @@ class NanoTcpClient(object):
         self._connected_at = None
         self._last_rx_at = None
         self._next_heartbeat_at = None
+        self._last_state_revision = 0
         self.ground_station_session_id = None
+        if had_handshake:
+            self.command_dispatcher.end_session(session_id)
 
         if reconnect:
             if stable_connection:
@@ -299,6 +321,9 @@ class NanoTcpClient(object):
                 self.stats["reconnect_count"] += 1
             self._had_handshake = True
             self.ground_station_session_id = message["groundStationSessionId"]
+            self.command_dispatcher.begin_session(
+                self.ground_station_session_id
+            )
             self._handshake_ready = True
             now = time.monotonic()
             self._last_rx_at = now
@@ -307,6 +332,7 @@ class NanoTcpClient(object):
                 (now - self._connected_at) * 1000.0
             )
             self._set_connection_state("UP")
+            self._queue_snapshot(self.ground_station_session_id)
             self.logger.info(
                 "ESP32 hello_ack received; groundStationSessionId=%s, helloRttMs=%s",
                 self.ground_station_session_id,
@@ -318,6 +344,21 @@ class NanoTcpClient(object):
                 return False
             self._last_rx_at = time.monotonic()
             self._set_connection_state("UP")
+            if message["type"] == "command":
+                if not self.command_dispatcher.submit(
+                    message,
+                    self.ground_station_session_id,
+                ):
+                    self.close("invalid command fields")
+                    return False
+                self.logger.info(
+                    "ground-station command received: session=%s id=%s cmd=%s",
+                    message.get("groundStationSessionId"),
+                    message.get("id"),
+                    message.get("cmd"),
+                )
+            elif message["type"] == "get_status":
+                self._queue_snapshot(self.ground_station_session_id)
 
         if self.on_message is not None:
             self.on_message(message)
@@ -343,20 +384,59 @@ class NanoTcpClient(object):
                 message.get("source") == "esp32"
                 and _is_uint32(message.get("uptimeMs"))
             )
+        if message_type == "command":
+            return True
+        if message_type == "get_status":
+            return (
+                message.get("groundStationSessionId")
+                == self.ground_station_session_id
+            )
+        return False
+
+    def _queue_command_response(self):
+        if self.command_dispatcher.consume_response_overflow(
+            self.ground_station_session_id
+        ):
+            self.close("command response queue overflow")
+            return False
+        if self._outbound:
+            return True
+        response = self.command_dispatcher.get_response_nowait(
+            self.ground_station_session_id
+        )
+        if response is not None:
+            self._queue_message(response)
         return True
 
     def _queue_heartbeat(self, now):
         uptime_ms = int((now - self._started_at) * 1000.0)
-        self._queue_message(
-            {
-                "v": PROTOCOL_VERSION,
-                "type": "heartbeat",
-                "source": "nano",
-                "uptimeMs": uptime_ms,
-                "tiOnline": False,
-            }
-        )
+        if not self._outbound:
+            self._queue_message(
+                {
+                    "v": PROTOCOL_VERSION,
+                    "type": "heartbeat",
+                    "source": "nano",
+                    "uptimeMs": uptime_ms,
+                    "tiOnline": self.state_store.ti_online,
+                }
+            )
         self._next_heartbeat_at = now + self.config.heartbeat_interval_s
+
+    def _queue_latest_status(self):
+        if self._outbound:
+            return
+        revision, message = self.state_store.build_message("status")
+        if revision == self._last_state_revision:
+            return
+        self._queue_message(message)
+        self._last_state_revision = revision
+
+    def _queue_snapshot(self, session_id=None):
+        revision, message = self.state_store.build_message("snapshot")
+        if session_id is not None:
+            message["groundStationSessionId"] = session_id
+        self._queue_message(message)
+        self._last_state_revision = revision
 
     def _queue_message(self, message):
         self._outbound.extend(encode_message(message))
@@ -382,6 +462,8 @@ class NanoTcpClient(object):
         if self.connection_state == state:
             return
         self.connection_state = state
+        link_state = state if state in ("UP", "DEGRADED") else "DOWN"
+        self.state_store.set_esp_nano_link(link_state)
         if self.on_state_change is not None:
             self.on_state_change(state)
 

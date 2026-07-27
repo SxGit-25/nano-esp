@@ -1,0 +1,14 @@
+[Unit]
+Description=Connect Jetson Nano wlan0 to the ESP32 ground-station AP
+Wants=NetworkManager.service
+After=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/nmcli --wait 20 connection up ESP_Nano ifname wlan0
+RemainAfterExit=yes
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
